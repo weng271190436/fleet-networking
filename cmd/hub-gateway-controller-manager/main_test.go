@@ -60,6 +60,10 @@ func TestNewScheme_RegistersGatewayAndFleetTypes(t *testing.T) {
 			name: "Fleet ServiceOriginAssignment",
 			gvk:  fleetnetv1alpha1.GroupVersion.WithKind("ServiceOriginAssignment"),
 		},
+		{
+			name: "Fleet MemberCluster",
+			gvk:  schema.GroupVersion{Group: "cluster.kubernetes-fleet.io", Version: "v1beta1"}.WithKind("MemberCluster"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,7 +112,8 @@ func TestCurrentOptions_UsesCommandLineConfiguration(t *testing.T) {
 func TestProductionDependencies_AreConfigured(t *testing.T) {
 	got := productionDependencies()
 
-	if got.getConfig == nil || got.newManager == nil || got.signalHandler == nil || got.loadAFDConfig == nil || got.newScheme == nil {
+	if got.getConfig == nil || got.newManager == nil || got.signalHandler == nil ||
+		got.loadAFDConfig == nil || got.newScheme == nil || got.setupControllers == nil {
 		t.Errorf("productionDependencies() = %#v, want all dependencies configured", got)
 	}
 
@@ -121,17 +126,19 @@ func TestProductionDependencies_AreConfigured(t *testing.T) {
 
 func TestRun_ManagesStartupLifecycle(t *testing.T) {
 	tests := []struct {
-		name              string
-		options           managerOptions
-		schemeError       error
-		loadConfigError   error
-		newManagerError   error
-		healthError       error
-		readyError        error
-		startError        error
-		wantError         string
-		wantConfigLoads   int
-		wantManagerStarts int
+		name                 string
+		options              managerOptions
+		schemeError          error
+		loadConfigError      error
+		newManagerError      error
+		setupError           error
+		healthError          error
+		readyError           error
+		startError           error
+		wantError            string
+		wantConfigLoads      int
+		wantControllerSetups int
+		wantManagerStarts    int
 	}{
 		{
 			name:        "scheme registration failure stops startup",
@@ -155,8 +162,21 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 				cloudConfigFile:  "provider.json",
 				afdResourceGroup: "afd-rg",
 			},
-			wantConfigLoads:   1,
-			wantManagerStarts: 1,
+			wantConfigLoads:      1,
+			wantControllerSetups: 1,
+			wantManagerStarts:    1,
+		},
+		{
+			name: "controller setup failure stops startup",
+			options: managerOptions{
+				enableAFD:        true,
+				cloudConfigFile:  "provider.json",
+				afdResourceGroup: "afd-rg",
+			},
+			setupError:           errors.New("setup failed"),
+			wantError:            "set up hub Gateway controllers",
+			wantConfigLoads:      1,
+			wantControllerSetups: 1,
 		},
 		{
 			name: "configuration failure stops startup",
@@ -198,6 +218,7 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 				startError:  tt.startError,
 			}
 			configLoads := 0
+			controllerSetups := 0
 			var receivedOptions ctrl.Options
 			deps := dependencies{
 				getConfig: func() *rest.Config {
@@ -226,6 +247,13 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 					}
 					return newScheme()
 				},
+				setupControllers: func(gotManager controllerManager) error {
+					controllerSetups++
+					if gotManager != manager {
+						t.Error("setupControllers received unexpected manager")
+					}
+					return tt.setupError
+				},
 			}
 
 			err := run(tt.options, deps)
@@ -242,6 +270,9 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 
 			if configLoads != tt.wantConfigLoads {
 				t.Errorf("Azure configuration loads = %d, want %d", configLoads, tt.wantConfigLoads)
+			}
+			if controllerSetups != tt.wantControllerSetups {
+				t.Errorf("controller setups = %d, want %d", controllerSetups, tt.wantControllerSetups)
 			}
 			if manager.starts != tt.wantManagerStarts {
 				t.Errorf("manager starts = %d, want %d", manager.starts, tt.wantManagerStarts)

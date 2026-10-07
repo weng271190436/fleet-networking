@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 1 complete; ready for Phase 2
+- **Status:** Phase 2 complete; ready for Phase 3
 - **Date:** 2026-10-07
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -659,13 +659,13 @@ trust policy in hub-owned assignment spec.
 
 ### Phase 2: Implement hub member selection
 
-- [ ] Add a `MultiClusterBackend` reconciler.
-- [ ] Evaluate `metav1.LabelSelector` against joined MemberClusters.
-- [ ] Sort selected members deterministically.
-- [ ] Reject empty and over-limit selections.
-- [ ] Create assignments in reserved member hub namespaces.
-- [ ] Delete assignments for deselected members only after origin withdrawal.
-- [ ] Aggregate assignment conditions into backend status.
+- [x] Add a `MultiClusterBackend` reconciler.
+- [x] Evaluate `metav1.LabelSelector` against joined MemberClusters.
+- [x] Sort selected members deterministically.
+- [x] Reject empty and over-limit selections.
+- [x] Create assignments in reserved member hub namespaces.
+- [x] Delete assignments for deselected members only after origin withdrawal.
+- [x] Aggregate assignment conditions into backend status.
 
 **Exit criteria**
 

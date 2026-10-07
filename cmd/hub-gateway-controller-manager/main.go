@@ -34,9 +34,11 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
+	clusterv1beta1 "go.goms.io/fleet/apis/cluster/v1beta1"
 	"go.goms.io/fleet/pkg/utils/cloudconfig/azure"
 
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
+	"go.goms.io/fleet-networking/pkg/controllers/hub/multiclusterbackend"
 )
 
 var (
@@ -98,11 +100,12 @@ type controllerManager interface {
 }
 
 type dependencies struct {
-	getConfig     func() *rest.Config
-	newManager    func(*rest.Config, ctrl.Options) (controllerManager, error)
-	signalHandler func() context.Context
-	loadAFDConfig func(string, string) (*azure.CloudConfig, error)
-	newScheme     func() (*runtime.Scheme, error)
+	getConfig        func() *rest.Config
+	newManager       func(*rest.Config, ctrl.Options) (controllerManager, error)
+	signalHandler    func() context.Context
+	loadAFDConfig    func(string, string) (*azure.CloudConfig, error)
+	newScheme        func() (*runtime.Scheme, error)
+	setupControllers func(controllerManager) error
 }
 
 func productionDependencies() dependencies {
@@ -114,6 +117,13 @@ func productionDependencies() dependencies {
 		signalHandler: ctrl.SetupSignalHandler,
 		loadAFDConfig: loadAFDConfiguration,
 		newScheme:     newScheme,
+		setupControllers: func(manager controllerManager) error {
+			mgr, ok := manager.(ctrl.Manager)
+			if !ok {
+				return errors.New("controller manager does not implement ctrl.Manager")
+			}
+			return (&multiclusterbackend.Reconciler{Client: mgr.GetClient()}).SetupWithManager(mgr)
+		},
 	}
 }
 
@@ -127,9 +137,7 @@ func run(options managerOptions, deps dependencies) error {
 		if _, err := deps.loadAFDConfig(options.cloudConfigFile, options.afdResourceGroup); err != nil {
 			return fmt.Errorf("load Azure Front Door configuration: %w", err)
 		}
-		// The feature flag intentionally performs configuration validation only
-		// until the Gateway reconcilers are introduced in the next slice.
-		klog.InfoS("Azure Front Door configuration is valid; no reconcilers are registered in the foundation release")
+		klog.InfoS("Azure Front Door configuration is valid")
 	} else {
 		klog.InfoS("Azure Front Door reconciliation is disabled")
 	}
@@ -146,6 +154,11 @@ func run(options managerOptions, deps dependencies) error {
 	})
 	if err != nil {
 		return fmt.Errorf("create hub Gateway controller manager: %w", err)
+	}
+	if options.enableAFD {
+		if err := deps.setupControllers(mgr); err != nil {
+			return fmt.Errorf("set up hub Gateway controllers: %w", err)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -170,6 +183,7 @@ func newScheme() (*runtime.Scheme, error) {
 		// ReferenceGrant remains v1beta1 in Gateway API v1.2.1.
 		gatewayv1beta1.Install,
 		fleetnetv1alpha1.AddToScheme,
+		clusterv1beta1.AddToScheme,
 	}
 	for _, install := range installers {
 		if err := install(scheme); err != nil {
