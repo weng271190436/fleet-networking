@@ -52,6 +52,14 @@ func TestNewScheme_RegistersGatewayAndFleetTypes(t *testing.T) {
 			name: "Fleet ServiceImport",
 			gvk:  fleetnetv1alpha1.GroupVersion.WithKind("ServiceImport"),
 		},
+		{
+			name: "Fleet MultiClusterBackend",
+			gvk:  fleetnetv1alpha1.GroupVersion.WithKind("MultiClusterBackend"),
+		},
+		{
+			name: "Fleet ServiceOriginAssignment",
+			gvk:  fleetnetv1alpha1.GroupVersion.WithKind("ServiceOriginAssignment"),
+		},
 	}
 
 	for _, tt := range tests {

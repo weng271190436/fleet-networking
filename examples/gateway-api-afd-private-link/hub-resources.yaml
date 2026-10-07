@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: afd-private-demo
+---
+apiVersion: networking.fleet.azure.com/v1alpha1
+kind: MultiClusterBackend
+metadata:
+  name: echo
+  namespace: afd-private-demo
+spec:
+  service:
+    name: echo
+    port: 80
+  clusterSelector:
+    matchLabels:
+      environment: poc
+    matchExpressions:
+    - key: region
+      operator: In
+      values:
+      - eastus
+      - westus2
+  healthProbe:
+    path: /healthz
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: global
+  namespace: afd-private-demo
+  annotations:
+    networking.fleet.azure.com/afd-sku: Premium_AzureFrontDoor
+    networking.fleet.azure.com/afd-waf-policy-id: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/security-rg/providers/Microsoft.Network/frontdoorWebApplicationFirewallPolicies/poc-waf
+spec:
+  gatewayClassName: azure-fleet-afd
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo
+  namespace: afd-private-demo
+spec:
+  parentRefs:
+  - name: global
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - group: networking.fleet.azure.com
+      kind: MultiClusterBackend
+      name: echo

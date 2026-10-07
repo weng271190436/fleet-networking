@@ -27,6 +27,7 @@ rules:
   - cluster.kubernetes-fleet.io
   resources:
   - internalmemberclusters
+  - memberclusters
   verbs:
   - get
   - list
@@ -61,6 +62,7 @@ rules:
   - multiclusterservices
   - serviceexports
   - serviceimports
+  - serviceoriginassignments
   - trafficmanagerbackends
   - trafficmanagerprofiles
   verbs:
@@ -75,13 +77,16 @@ rules:
   - networking.fleet.azure.com
   resources:
   - internalserviceexports/finalizers
+  - multiclusterbackends/finalizers
   - serviceexports/finalizers
+  - serviceoriginassignments/finalizers
   verbs:
   - update
 - apiGroups:
   - networking.fleet.azure.com
   resources:
   - internalserviceexports/status
+  - multiclusterbackends/status
   - multiclusterservices/status
   - serviceexports/status
   - serviceimports/status
@@ -94,6 +99,16 @@ rules:
 - apiGroups:
   - networking.fleet.azure.com
   resources:
+  - multiclusterbackends
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.fleet.azure.com
+  resources:
   - multiclusterservices/finalizers
   - serviceimports/finalizers
   - trafficmanagerbackends/finalizers
@@ -101,3 +116,9 @@ rules:
   verbs:
   - get
   - update
+- apiGroups:
+  - networking.fleet.azure.com
+  resources:
+  - serviceoriginassignments/status
+  verbs:
+  - get

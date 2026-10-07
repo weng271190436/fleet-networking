@@ -7,6 +7,14 @@ Licensed under the MIT license.
 // ServiceImport resources in the hub cluster.
 package main
 
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=multiclusterbackends,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=multiclusterbackends/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=multiclusterbackends/finalizers,verbs=update
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments/status,verbs=get
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments/finalizers,verbs=update
+//+kubebuilder:rbac:groups=cluster.kubernetes-fleet.io,resources=memberclusters,verbs=get;list;watch
+
 import (
 	"context"
 	"errors"

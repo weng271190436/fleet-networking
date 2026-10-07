@@ -1,0 +1,19 @@
+# This internal resource is created by the hub backend-selection controller. Do not apply it.
+apiVersion: networking.fleet.azure.com/v1alpha1
+kind: ServiceOriginAssignment
+metadata:
+  name: echo-2c66d893
+  namespace: fleet-member-member-a
+spec:
+  backendRef:
+    namespace: afd-private-demo
+    name: echo
+    uid: 2c66d893-0000-0000-0000-000000000000
+  serviceRef:
+    namespace: afd-private-demo
+    name: echo
+    port: 80
+  connectivity:
+    type: PrivateLink
+  approval:
+    requestToken: 8384086c-0000-0000-0000-000000000000

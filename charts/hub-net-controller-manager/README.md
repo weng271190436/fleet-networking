@@ -15,6 +15,14 @@ kubectl apply -f config/crd/*
 helm install hub-net-controller-manager ./charts/hub-net-controller-manager/
 ```
 
+To install or upgrade the hub networking CRDs through the chart's CRD installer init container,
+including `MultiClusterBackend` and `ServiceOriginAssignment`, enable the installer:
+
+```bash
+helm install hub-net-controller-manager ./charts/hub-net-controller-manager/ \
+  --set crdInstaller.enabled=true
+```
+
 _See [helm install](https://helm.sh/docs/helm/helm_install/) for command documentation._
 
 ## Upgrade Chart in hub cluster
@@ -32,6 +40,9 @@ helm upgrade hub-net-controller-manager ./charts/hub-net-controller-manager/
 | image.repository | Image repository | `ghcr.io/azure/fleet-networking/hub-net-controller-manager` |
 | image.pullPolicy | Image pullPolicy | `IfNotPresent` |
 | image.tag | The image tag to use | `v0.1.0` |
+| crdInstaller.enabled | Install or upgrade hub networking CRDs through the CRD installer init container | `false` |
+| crdInstaller.image.repository | CRD installer image repository | `ghcr.io/azure/fleet-networking/net-crd-installer` |
+| crdInstaller.image.tag | CRD installer image tag | `main` |
 | logVerbosity | Log level. Uses V logs (klog) | `2` |
 | leaderElectionNamespace | The namespace in which the leader election resource will be created. | `fleet-system` |
 | fleetSystemNamespace | The namespace that this Helm chart is installed on and reserved by fleet. | `fleet-system` |

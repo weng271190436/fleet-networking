@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 0 complete; approved for Phase 1
+- **Status:** Phase 1 complete; ready for Phase 2
 - **Date:** 2026-10-07
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -643,13 +643,13 @@ trust policy in hub-owned assignment spec.
 
 ### Phase 1: Add APIs and generated artifacts
 
-- [ ] Add `MultiClusterBackend` v1alpha1 types.
-- [ ] Add `ServiceOriginAssignment` v1alpha1 types.
-- [ ] Add condition and reason constants.
-- [ ] Register both APIs with the repository scheme.
-- [ ] Generate deepcopy code, CRDs, and RBAC.
-- [ ] Add chart installation for both CRDs.
-- [ ] Add example POC manifests.
+- [x] Add `MultiClusterBackend` v1alpha1 types.
+- [x] Add `ServiceOriginAssignment` v1alpha1 types.
+- [x] Add condition and reason constants.
+- [x] Register both APIs with the repository scheme.
+- [x] Generate deepcopy code, CRDs, and RBAC.
+- [x] Add chart installation for both CRDs.
+- [x] Add example POC manifests.
 
 **Exit criteria**
 
