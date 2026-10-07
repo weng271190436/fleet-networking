@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Proposed
+- **Status:** Phase 0 complete; approved for Phase 1
 - **Date:** 2026-10-07
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -50,6 +50,12 @@ behavior must remain unchanged.
 | Custom domains and certificates | Out of scope; use the default AFD endpoint |
 | Unit tests | Minimal happy-path coverage |
 | Primary validation | Real Azure end-to-end test |
+| Eligible members | `cluster.kubernetes-fleet.io/v1beta1` `MemberCluster` with `Joined=True` |
+| Selected-member limit | 40 per backend |
+| AFD ownership boundary | One controller-owned Premium profile per Gateway |
+| AFD SDK and API | `armcdn/v3` v3.0.0, API `2025-06-01` |
+| WAF lookup SDK and API | `armfrontdoor/v2` v2.0.0, API `2025-10-01` |
+| PLS approval SDK and API | Existing `armnetwork/v4` v4.3.0, API `2023-05-01` |
 
 ## Departure from the GEP-1748 proposal
 
@@ -127,7 +133,7 @@ one HTTPRoute, one AFD Premium profile, one pre-created WAF policy, and two priv
 `MultiClusterBackend` is a namespaced, user-facing backend object on the hub. It is referenced by
 `HTTPRoute.backendRefs`.
 
-Proposed shape:
+Frozen Phase 0 shape:
 
 ```yaml
 apiVersion: networking.fleet.azure.com/v1alpha1
@@ -175,12 +181,30 @@ status:
       status: "True"
 ```
 
+Field contract:
+
+| Field | Type | Required | Validation and ownership |
+|---|---|---|---|
+| `spec.service.name` | string | Yes | DNS-1123 Service name; user-owned |
+| `spec.service.port` | int32 | Yes | 1-65535; user-owned and authoritative for the backend port |
+| `spec.clusterSelector` | `metav1.LabelSelector` | Yes | Must contain at least one label or expression; user-owned |
+| `spec.healthProbe.path` | string | No | Defaults to `/`; absolute path with maximum length 1024 |
+| `status.observedGeneration` | int64 | No | Hub backend-selection controller-owned |
+| `status.selectedClusters` | int32 | No | 0-40; hub backend-selection controller-owned |
+| `status.readyOrigins` | int32 | No | 0-40; hub backend-selection controller-owned |
+| `status.conditions` | `[]metav1.Condition` | No | Map keyed by condition type; hub-owned |
+| `status.members` | member status list | No | Maximum 40, map keyed by cluster name; hub-owned |
+
 Initial rules:
 
 - the referenced Service has the same namespace as the `MultiClusterBackend`;
 - `spec.service.name` and `spec.service.port` are required;
 - the selector uses standard `metav1.LabelSelector` semantics;
-- the controller evaluates labels from authoritative Fleet `MemberCluster` objects;
+- an empty selector is rejected to prevent accidental fleet-wide selection;
+- the controller evaluates `metadata.labels` from authoritative
+  `cluster.kubernetes-fleet.io/v1beta1` `MemberCluster` objects;
+- only members with the `Joined` condition set to `True` are eligible;
+- the currently unused `Healthy` condition is not an eligibility gate;
 - the selected member count must be between 1 and the configured POC limit;
 - the initial selected-member limit is 40 to leave headroom below the AFD origin-group limit;
 - selecting more than the limit fails explicitly and does not partially select members;
@@ -226,7 +250,7 @@ fleet-member-<member-name>
 The hub owns `spec`. The selected member networking controller owns `status`. No controller writes
 both sides of this ownership boundary.
 
-Proposed shape:
+Frozen Phase 0 shape:
 
 ```yaml
 apiVersion: networking.fleet.azure.com/v1alpha1
@@ -247,7 +271,6 @@ spec:
     type: PrivateLink
   approval:
     requestToken: 8384086c-0000-0000-0000-000000000000
-    trustedSubscriptionID: 00000000-0000-0000-0000-000000000000
 status:
   observedGeneration: 1
   origin:
@@ -266,6 +289,24 @@ status:
     reason: ConnectionApproved
 ```
 
+Field contract:
+
+| Field | Type | Required | Validation and ownership |
+|---|---|---|---|
+| `spec.backendRef.namespace` | string | Yes | DNS-1123 namespace; hub-owned |
+| `spec.backendRef.name` | string | Yes | DNS-1123 backend name; hub-owned |
+| `spec.backendRef.uid` | `types.UID` | Yes | Non-empty immutable backend identity; hub-owned |
+| `spec.serviceRef.namespace` | string | Yes | Member-local Service namespace; hub-owned |
+| `spec.serviceRef.name` | string | Yes | Member-local DNS-1123 Service name; hub-owned |
+| `spec.serviceRef.port` | int32 | Yes | 1-65535; hub-owned |
+| `spec.connectivity.type` | string enum | Yes | The only POC value is `PrivateLink`; hub-owned |
+| `spec.approval.requestToken` | string | Yes | 32-64 URL-safe characters, unique per assignment UID; hub-owned |
+| `status.observedGeneration` | int64 | No | Selected member controller-owned |
+| `status.origin.azureLocation` | string | No | Discovered Azure location; member-owned |
+| `status.origin.loadBalancerAddress` | string | No | Discovered ILB address; member-owned |
+| `status.origin.privateLinkServiceID` | string | No | Full discovered PLS resource ID; member-owned |
+| `status.conditions` | `[]metav1.Condition` | No | Map keyed by condition type; member-owned |
+
 Initial rules:
 
 - the assignment name is deterministic from backend UID and member identity;
@@ -274,12 +315,16 @@ Initial rules:
 - the member hub identity can read assignments and update status only in its own namespace;
 - the member derives its cluster identity from trusted configuration, not from assignment labels;
 - origin facts are accepted only from the member to which the namespace belongs;
+- requester subscription allowlists are trusted member-controller configuration and are never
+  supplied through the hub-owned assignment;
 - the member does not create, update, or delete AFD resources;
 - the hub does not update assignment status; and
 - assignment status contains no credentials or secrets.
 
-The approval request token is a correlation value, not a credential. It must be unpredictable,
-unique per assignment UID, and placed in the AFD shared Private Link request message.
+The approval request token is a correlation value, not a credential. It must be unpredictable and
+unique per assignment UID. The AFD shared Private Link request message is exactly
+`fleet:<assignment-uid>:<request-token>` so the member can compare the complete message rather than
+performing a substring or prefix match.
 
 ### Gateway configuration
 
@@ -312,6 +357,21 @@ POC validation requires:
 - no resource adoption.
 
 The controller attaches the existing WAF policy but never creates, modifies, or deletes the policy.
+
+### Frozen Azure API versions
+
+The POC uses SDK-generated clients and their embedded stable REST API versions:
+
+| Resource operations | Go SDK module | SDK version | REST API version |
+|---|---|---|---|
+| AFD profiles, endpoints, origin groups, origins, routes, and security policies | `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cdn/armcdn/v3` | `v3.0.0` | `2025-06-01` |
+| Read-only validation of `Microsoft.Network/frontdoorWebApplicationFirewallPolicies` | `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/frontdoor/armfrontdoor/v2` | `v2.0.0` | `2025-10-01` |
+| PLS private endpoint connection list, get, and approval | Existing `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4` | `v4.3.0` | `2023-05-01` |
+
+The WAF client is separate from `armcdn` because the required pre-created policy uses the
+`Microsoft.Network/frontdoorWebApplicationFirewallPolicies` resource type. The WAF client is
+exposed behind a read-only interface; create, update, and delete operations are not part of the
+provider contract.
 
 ## Controller responsibilities
 
@@ -407,17 +467,20 @@ The member controller must never approve all pending connections on a PLS.
 
 Approval sequence:
 
-1. The hub creates an assignment containing a unique request token and trusted subscription ID.
+1. The hub creates an assignment containing a unique request token.
 2. The member discovers and publishes its PLS resource ID.
-3. The hub creates the AFD origin with the token in the shared Private Link request message.
+3. The hub creates the AFD origin with the exact
+   `fleet:<assignment-uid>:<request-token>` shared Private Link request message.
 4. Azure creates a pending private endpoint connection on the member's PLS.
 5. The member finds the pending connection.
 6. The member verifies:
    - the assignment still exists;
    - the assignment UID and generation are current;
    - the PLS matches the assignment's discovered PLS;
-   - the request message contains the exact token;
-   - the requester belongs to the configured trusted subscription or tenant; and
+   - the connection state is `Pending`;
+   - the complete request message exactly matches the value derived from the assignment;
+   - if a member-local subscription allowlist is configured, the subscription parsed from the
+     managed private endpoint resource ID is allowlisted; and
    - the local Service and PLS remain valid.
 7. The member approves the connection.
 8. The member reports `PrivateLinkApproved=True`.
@@ -425,6 +488,13 @@ Approval sequence:
 
 If any check fails, the member leaves the connection pending and reports an actionable condition.
 It must not silently approve or reject an unrelated connection.
+
+The Azure PLS private endpoint connection response exposes the managed private endpoint resource ID
+but does not expose a tenant ID that the member can authenticate directly. Phase 0 therefore does
+not claim tenant verification. The optional requester subscription allowlist is member-local
+trusted configuration, not assignment spec written by the hub. The request token provides
+correlation and replay resistance within an assignment lifecycle; it is not a credential or an
+independent requester identity.
 
 ## Readiness and failure policy
 
@@ -529,16 +599,41 @@ Generate and review RBAC for:
 - Fleet `MemberCluster` read access; and
 - member-local Service read access.
 
+## Phase 0 frozen contract and stability
+
+Phase 0 freezes the following implementation inputs:
+
+- `MultiClusterBackend` and `ServiceOriginAssignment` use
+  `networking.fleet.azure.com/v1alpha1`.
+- `MultiClusterBackend` is a user-facing experimental POC API. It is not a production compatibility
+  promise. Any post-POC promotion requires a separate API review and conversion/storage strategy.
+- `ServiceOriginAssignment` is an internal experimental transport API. Users must not create or
+  depend on it, and it may change or be removed without migration if the POC does not proceed.
+- Upstream `Gateway` and `HTTPRoute` remain standard APIs, but only the feature subset documented
+  by this POC is supported by the `azure-fleet-afd` GatewayClass.
+- Existing AFD annotation meanings remain implementation API as documented by the Gateway design;
+  this POC does not redefine them.
+- Existing `ServiceExport`, `ServiceImport`, Traffic Manager, and multi-cluster Service APIs and
+  behavior are unchanged.
+- Spec/status ownership is exclusive: users own `MultiClusterBackend.spec`, the hub backend
+  controller owns `MultiClusterBackend.status` and `ServiceOriginAssignment.spec`, and the selected
+  member controller owns `ServiceOriginAssignment.status`.
+
+The example `MultiClusterBackend`, `ServiceOriginAssignment`, `Gateway`, and `HTTPRoute` manifests
+have been reviewed against the frozen field contract. They contain all required fields, use valid
+enum and selector values, leave `HTTPRoute.backendRef.port` unset, and do not place member-local
+trust policy in hub-owned assignment spec.
+
 ## Implementation phases
 
 ### Phase 0: Freeze the POC contract
 
-- [ ] Review and approve the two CRD shapes.
-- [ ] Confirm the authoritative Fleet `MemberCluster` GVK and label source.
-- [ ] Confirm the selected-member hard limit.
-- [ ] Confirm the AFD profile-per-Gateway ownership boundary.
-- [ ] Confirm the WAF policy and Private Link Azure API versions.
-- [ ] Record the trusted subscription and tenant checks used for approval.
+- [x] Review and approve the two CRD shapes.
+- [x] Confirm the authoritative Fleet `MemberCluster` GVK and label source.
+- [x] Confirm the selected-member hard limit.
+- [x] Confirm the AFD profile-per-Gateway ownership boundary.
+- [x] Confirm the WAF policy and Private Link Azure API versions.
+- [x] Record the enforceable requester subscription and tenant constraints used for approval.
 
 **Exit criteria**
 
@@ -616,7 +711,7 @@ Generate and review RBAC for:
 - [ ] Include the assignment token in the AFD Private Link request message.
 - [ ] Add a member Azure client for PLS private endpoint connections.
 - [ ] Find the matching pending connection.
-- [ ] Enforce token, PLS, assignment, subscription, and tenant checks.
+- [ ] Enforce token, PLS, assignment, connection-state, and configured subscription checks.
 - [ ] Approve only the matching connection.
 - [ ] Publish `PrivateLinkApproved`.
 
