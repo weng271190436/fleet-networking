@@ -115,12 +115,13 @@ helm upgrade member-net-controller-manager ./charts/member-net-controller-manage
 | affinity | The node affinity to use for pod scheduling | `{}` |
 | tolerations | The toleration to use for pod scheduling | `[]` |
 | enableTrafficManagerFeature | Set to true to enable the Azure Traffic Manager feature. | `false` |
+| enableAFDPrivateLinkFeature | Set to true to enable experimental member-side AFD Private Link origin discovery. | `false` |
 | enableNetworkingFeatures | Set to true to enable Networking Controllers on member cluster. | `true` |
-| azureCloudConfig | The Azure cloud provider configuration | **required if AzureTrafficManager feature is enabled (enableTrafficManagerFeature == true)** |
+| azureCloudConfig | The Azure cloud provider configuration | **required if Traffic Manager or AFD Private Link is enabled** |
 
 ## Override Azure cloud config
 
-**If AzureTrafficManager feature is enabled, then an Azure cloud configuration is required.** Azure cloud configuration provides resource metadata and credentials for `fleet-hub-net-controller-manager` and `fleet-member-net-controller-manager` to manipulate Azure resources. It's embedded into a Kubernetes secret and mounted to the pods. The values can be modified under `config.azureCloudConfig` section in values.yaml or can be provided as a separate file.
+**If the Traffic Manager or AFD Private Link feature is enabled, then an Azure cloud configuration is required.** Azure cloud configuration provides resource metadata and credentials for `fleet-hub-net-controller-manager` and `fleet-member-net-controller-manager` to access Azure resources. It's embedded into a Kubernetes secret and mounted to the pods. The values can be modified under `config.azureCloudConfig` section in values.yaml or can be provided as a separate file.
 
 | configuration value                                   | description | Remark                                                                               |
 |-------------------------------------------------------| --- |--------------------------------------------------------------------------------------|

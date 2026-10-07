@@ -90,6 +90,7 @@ rules:
   - multiclusterservices/status
   - serviceexports/status
   - serviceimports/status
+  - serviceoriginassignments/status
   - trafficmanagerbackends/status
   - trafficmanagerprofiles/status
   verbs:
@@ -116,9 +117,3 @@ rules:
   verbs:
   - get
   - update
-- apiGroups:
-  - networking.fleet.azure.com
-  resources:
-  - serviceoriginassignments/status
-  verbs:
-  - get

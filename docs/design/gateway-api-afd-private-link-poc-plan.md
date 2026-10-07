@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 2 complete; ready for Phase 3
+- **Status:** Phase 3 complete; ready for Phase 4
 - **Date:** 2026-10-07
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -675,12 +675,12 @@ trust policy in hub-owned assignment spec.
 
 ### Phase 3: Implement member discovery
 
-- [ ] Add the assignment controller to the member networking manager.
-- [ ] Reuse the existing scoped hub client and member client.
-- [ ] Resolve the local Service and requested port.
-- [ ] Discover ILB address, PLS resource ID, and Azure location.
-- [ ] Publish `ServiceResolved` and `InfrastructureReady`.
-- [ ] Report actionable failure conditions.
+- [x] Add the assignment controller to the member networking manager.
+- [x] Reuse the existing scoped hub client and member client.
+- [x] Resolve the local Service and requested port.
+- [x] Discover ILB address, PLS resource ID, and Azure location.
+- [x] Publish `ServiceResolved` and `InfrastructureReady`.
+- [x] Report actionable failure conditions.
 
 **Exit criteria**
 

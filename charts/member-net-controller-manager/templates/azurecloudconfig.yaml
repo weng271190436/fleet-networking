@@ -1,4 +1,4 @@
-{{- if .Values.enableTrafficManagerFeature }}
+{{- if or .Values.enableTrafficManagerFeature .Values.enableAFDPrivateLinkFeature }}
 apiVersion: v1
 kind: Secret
 metadata:

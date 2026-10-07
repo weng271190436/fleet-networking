@@ -47,23 +47,96 @@
 
 ### Phase 2: Implement POC Phase 3 - member origin discovery
 
-- [ ] **Task 2.1: Write discovery and status tests first.**
+- [x] **Task 2.1: Write discovery and status tests first.**
   - Cover Service not found, port not found, non-LoadBalancer Service, non-internal load balancer,
     pending ingress, PLS missing, ready origin facts, status-only writes, and unchanged-status
     no-ops.
   - Success criteria: tests define actionable conditions and member-only status ownership.
-- [ ] **Task 2.2: Implement Service, ILB, and PLS discovery.**
+- [x] **Task 2.2: Implement Service, ILB, and PLS discovery.**
   - Add a member assignment reconciler with separate scoped hub and local member clients.
   - Put Azure discovery behind a narrow interface and reuse existing cloud configuration.
   - Success criteria: valid pre-created infrastructure yields location, ILB IP, and full PLS ID.
-- [ ] **Task 2.3: Register the member controller.**
+- [x] **Task 2.3: Register the member controller.**
   - Reuse the existing member manager hub cache restricted to its reserved namespace.
   - Add only required local Service and hub assignment RBAC.
   - Success criteria: the member writes assignment status only and cannot modify assignment spec.
-- [ ] **Task 2.4: Validate, document, commit, and push Phase 3.**
+- [x] **Task 2.4: Validate, document, commit, and push Phase 3.**
   - Run focused tests and static/generated checks.
   - Commit as `feat: add member origin discovery controller` and push.
   - Success criteria: Phase 3 exit criteria pass and the commit is isolated from later work.
+
+#### Phase 3 execution plan
+
+1. **Tests first**
+   - Add table-driven reconciliation tests for missing Services and ports, non-LoadBalancer and
+     non-internal Services, pending ingress, missing PLS, ready infrastructure, status-only writes,
+     and unchanged-status no-ops.
+   - Add focused Azure adapter tests for paged ARM responses and frontend-to-PLS association.
+2. **Member discovery controller**
+   - Resolve the assignment through the scoped hub client and the referenced Service through the
+     local member client.
+   - Match the ready ingress IP to an ARM load balancer frontend, then match that frontend resource
+     ID to a PLS in the same AKS node resource group.
+   - Publish only member-owned assignment status and poll while infrastructure is pending.
+3. **Manager, chart, and RBAC wiring**
+   - Register the controller on the scoped hub manager with a local Service watch routed through
+     the member manager.
+   - Initialize the existing `armnetwork/v4` clients only when a new explicit AFD Private Link
+     feature flag is enabled.
+   - Add only the chart arguments, cloud-config mounting, local Service reads, and assignment
+     status permissions required by this phase.
+4. **Validation and delivery**
+   - Run focused race tests, formatting, vet, lint, generated-manifest checks, and diff checks.
+   - Mark only POC Phase 3 and master tasks 2.1-2.4 complete, then create and push the single
+     required Phase 3 commit.
+
+Phase 3 implementation uses the approved master plan. The feature remains discovery-only: it does
+not create infrastructure, program AFD, or approve Private Link connections.
+
+#### Phase 3 implementation details
+
+- Added table-driven tests before the reconciler. The initial focused test run failed because the
+  `Reconciler` did not exist, establishing the intended red test boundary.
+- Added a member controller that reads assignments through the scoped hub client, reads Services
+  through the local member client, resolves the exact numeric Service port, and requires an
+  internal `LoadBalancer` Service with a ready ingress IP.
+- Added read-only ARM adapters over the existing `armnetwork/v4` load balancer and Private Link
+  Service clients. Discovery matches the Service ingress IP to an LB frontend resource ID and then
+  matches that frontend ID to its associated PLS.
+- Added status-only publication of `ServiceResolved` and `InfrastructureReady`, unchanged-status
+  no-ops, and polling for pending ingress, frontend, or PLS infrastructure.
+- Registered the controller on the existing namespace-scoped hub manager and added a local Service
+  watch sourced from the member manager cache.
+- Added the disabled-by-default `enable-afd-private-link-feature` flag. ARM discovery clients and
+  cloud configuration are initialized only when Traffic Manager or this new feature needs them.
+- Updated the member chart arguments, cloud-config secret/mount conditions, documentation, and
+  assignment read/status RBAC.
+
+#### Phase 3 course corrections
+
+- Running the pinned generator correctly merged assignment status update permissions into
+  `config/rbac/role.yaml`, but the current generator also removed two harmless import aliases from
+  unrelated generated deepcopy files despite no API changes. Those unrelated generated formatting
+  changes were excluded from the Phase 3 change set.
+- The repository-wide lint target ran but reported two existing Phase 2 findings in
+  `pkg/controllers/hub/multiclusterbackend`: one test complexity warning and one guarded
+  `int`-to-`int32` conversion warning. Focused lint for all Phase 3 packages passed; unrelated Phase
+  2 code was not changed.
+- The first broader member race run lacked `KUBEBUILDER_ASSETS` and could not start envtest. The
+  same suite passed after using the repository-pinned `setup-envtest` assets.
+
+#### Phase 3 validation
+
+- Focused race tests passed for the new controller and member manager package.
+- All member-controller race tests passed with Kubernetes 1.33 envtest assets.
+- Repository-wide `go vet ./...` passed.
+- Focused golangci-lint passed for the new controller and member manager packages.
+- Helm lint passed for both default and feature-enabled member chart values; feature-enabled
+  rendering contains the flag, cloud configuration, and assignment RBAC.
+- `controller-gen` manifests and object generation completed. The intended generated RBAC change
+  is checked in; unrelated import-alias churn was excluded.
+- `go.mod` and `go.sum` are unchanged, so `go mod tidy` was not required.
+- `git diff --check` passed.
 
 ### Phase 3: Implement POC Phase 4 - AFD Premium provider
 
@@ -253,6 +326,7 @@ The user approved the delivery plan.
 - Verified the local branch and fork both point to the Phase 1 commit.
 - Confirmed Azure CLI authentication, a Kubernetes context, kubectl, and Helm are available.
 - Implemented and validated POC Phase 2.
+- Implemented and validated POC Phase 3 member origin discovery.
 
 ## Before/After Comparison
 
@@ -262,7 +336,8 @@ The user approved the delivery plan.
 
 ### After
 
-- Phase 2 is complete. Phase 3 can implement member-local Service, ILB, and PLS discovery.
+- Phase 3 is complete. A selected member now publishes ready ILB and PLS origin facts through
+  assignment status. Phase 4 can consume these facts to implement the AFD Premium provider.
 
 ## References
 
@@ -272,6 +347,9 @@ The user approved the delivery plan.
 - `.github/.copilot/breadcrumbs/2026-10-07-2031-gateway-api-afd-private-link-phase-1.md` — API and
   generated-artifact implementation.
 - `395e965` — completed and pushed Phase 1 commit.
+- `bc5702b` — completed and pushed Phase 2 commit.
+- `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4` — existing
+  read-only load balancer and Private Link Service discovery clients.
 - `pkg/common/hubconfig` — authoritative reserved member namespace naming.
 - `cmd/hub-gateway-controller-manager` — hub Gateway process and feature gate.
 - `cmd/member-net-controller-manager` — member process with local and scoped hub clients.

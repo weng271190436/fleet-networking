@@ -92,6 +92,22 @@ rules:
 - apiGroups:
   - networking.fleet.azure.com
   resources:
+  - serviceoriginassignments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.fleet.azure.com
+  resources:
+  - serviceoriginassignments/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - networking.fleet.azure.com
+  resources:
   - serviceimports
   verbs:
   - get
