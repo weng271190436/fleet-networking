@@ -24,6 +24,7 @@ import (
 	"go.goms.io/fleet/pkg/utils/cloudconfig/azure"
 
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
+	"go.goms.io/fleet-networking/pkg/controllers/hub/afdgateway"
 	"go.goms.io/fleet-networking/pkg/providers/azure/frontdoor"
 )
 
@@ -272,10 +273,13 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 					}
 					return newScheme()
 				},
-				setupControllers: func(gotManager controllerManager) error {
+				setupControllers: func(gotManager controllerManager, provider afdgateway.Provider) error {
 					controllerSetups++
 					if gotManager != manager {
 						t.Error("setupControllers received unexpected manager")
+					}
+					if tt.options.enableAFD && provider == nil {
+						t.Error("setupControllers received nil AFD provider")
 					}
 					return tt.setupError
 				},

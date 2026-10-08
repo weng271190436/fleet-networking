@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
 )
@@ -57,9 +58,14 @@ func BuildMultiClusterBackend(
 			assignment.Spec.BackendRef.Name != backend.Name ||
 			assignment.Spec.BackendRef.UID != backend.UID ||
 			assignment.Status.ObservedGeneration != assignment.Generation ||
-			!meta.IsStatusConditionTrue(assignment.Status.Conditions, string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady)) {
+			!currentConditionTrue(
+				assignment.Status.Conditions,
+				string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady),
+				assignment.Generation,
+			) {
 			continue
 		}
+
 		if assignment.Spec.Connectivity.Type != fleetnetv1alpha1.ServiceOriginConnectivityTypePrivateLink {
 			return MultiClusterBackend{}, fmt.Errorf("ready ServiceOriginAssignment %s/%s does not require Private Link", assignment.Namespace, assignment.Name)
 		}
@@ -85,6 +91,11 @@ func BuildMultiClusterBackend(
 		return result.Origins[i].Cluster < result.Origins[j].Cluster
 	})
 	return result, nil
+}
+
+func currentConditionTrue(conditions []metav1.Condition, conditionType string, generation int64) bool {
+	condition := meta.FindStatusCondition(conditions, conditionType)
+	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == generation
 }
 
 func assignmentCluster(assignment *fleetnetv1alpha1.ServiceOriginAssignment) string {

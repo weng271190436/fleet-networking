@@ -23,7 +23,7 @@ import (
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
 )
 
-func TestReconcileSelectsMembersAndAggregatesStatus(t *testing.T) {
+func TestReconcileSelectsMembersAndAggregatesStatus(t *testing.T) { //nolint:gocyclo // One lifecycle scenario intentionally checks all aggregated state.
 	scheme := runtime.NewScheme()
 	if err := fleetnetv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme(fleet networking) error = %v", err)

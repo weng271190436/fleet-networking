@@ -141,8 +141,9 @@ type Provider struct {
 
 // Result describes whether the desired resource graph is fully provisioned.
 type Result struct {
-	Ready   bool
-	Pending []string
+	Ready            bool
+	Pending          []string
+	EndpointHostName string
 }
 
 // NewProvider constructs an AFD Premium provider.
@@ -215,6 +216,9 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 			return result, retryable(fmt.Errorf("get %s %q: %w", item.kind, item.value.Name, getErr))
 		}
 		if getErr == nil {
+			if item.kind == ResourceEndpoint {
+				result.EndpointHostName = current.HostName
+			}
 			if supportsTags(item.kind) && !ownedBy(current.Tags, item.value.Tags) {
 				return result, fmt.Errorf("%s %q ownership tags do not match Gateway %s/%s", item.kind, item.value.Name, desired.Namespace, desired.Name)
 			}
@@ -231,6 +235,9 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 			return result, retryable(fmt.Errorf("upsert %s %q: %w", item.kind, item.value.Name, updateErr))
 		}
 		result.Ready = false
+		if item.kind == ResourceEndpoint {
+			result.EndpointHostName = updated.HostName
+		}
 		if updated.ProvisioningState != ProvisioningStateSucceeded {
 			result.Pending = append(result.Pending, fmt.Sprintf("%s/%s", item.kind, item.value.Name))
 		}
@@ -257,6 +264,37 @@ func (p *Provider) Delete(ctx context.Context, desired gatewaymodel.GlobalGatewa
 	}
 	if err := p.clients.Delete(ctx, ResourceProfile, parent, name); err != nil && !errors.Is(err, ErrNotFound) {
 		return retryable(fmt.Errorf("delete profile %q: %w", name, err))
+	}
+	return nil
+}
+
+// WithdrawOrigins removes exact controller-derived origins after verifying the tagged parent.
+// It never mutates the origin group, member infrastructure, or external WAF policy.
+func (p *Provider) WithdrawOrigins(
+	ctx context.Context,
+	desired gatewaymodel.GlobalGateway,
+	originGroupName string,
+	originNames []string,
+) error {
+	profileName := ProfileName(desired)
+	profileParent := ResourceParent{ResourceGroup: p.resourceGroup}
+	current, err := p.clients.Get(ctx, ResourceProfile, profileParent, profileName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return retryable(fmt.Errorf("get profile %q before origin withdrawal: %w", profileName, err))
+	}
+	if !ownedBy(current.Tags, ownershipTags(p.hubIdentity, desired)) {
+		return fmt.Errorf("profile %q ownership tags do not match Gateway %s/%s", profileName, desired.Namespace, desired.Name)
+	}
+	parent := ResourceParent{
+		ResourceGroup: p.resourceGroup, ProfileName: profileName, OriginGroupName: originGroupName,
+	}
+	for _, name := range originNames {
+		if err := p.clients.Delete(ctx, ResourceOrigin, parent, name); err != nil && !errors.Is(err, ErrNotFound) {
+			return retryable(fmt.Errorf("delete withdrawn origin %q: %w", name, err))
+		}
 	}
 	return nil
 }
@@ -321,11 +359,12 @@ func BuildResourceGraphWithHubIdentity(subscriptionID, resourceGroup, hubIdentit
 				return ResourceGraph{}, fmt.Errorf("origin %q requires Private Link service, location, and request message", origin.Cluster)
 			}
 			graph.Origins = append(graph.Origins, Resource{
-				Name:                 origin.Name,
-				ID:                   originID(subscriptionID, resourceGroup, profileName, backend.OriginGroupName, origin.Name),
-				HostName:             origin.Endpoint,
-				HTTPPort:             backend.Port,
-				Weight:               int32(origin.Weight),
+				Name:     origin.Name,
+				ID:       originID(subscriptionID, resourceGroup, profileName, backend.OriginGroupName, origin.Name),
+				HostName: origin.Endpoint,
+				HTTPPort: backend.Port,
+				// Model validation constrains origin weights to [0, 1000].
+				Weight:               int32(origin.Weight), // #nosec G115
 				Priority:             1,
 				Enabled:              true,
 				PrivateLinkServiceID: origin.PrivateLinkResourceID,
@@ -376,6 +415,10 @@ func equalDesired(current, desired Resource) bool {
 	desired.ProvisioningState = ""
 	if desired.PrivateLinkServiceID != "" {
 		current.OriginGroupID = desired.OriginGroupID
+	}
+	// HostName on an endpoint is Azure-assigned output, not desired input.
+	if desired.HostName == "" {
+		current.HostName = ""
 	}
 	return reflect.DeepEqual(current, desired)
 }

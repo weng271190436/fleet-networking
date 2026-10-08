@@ -166,8 +166,9 @@ func readyAssignment(cluster, uid, token, address, location, privateLinkServiceI
 				PrivateLinkServiceID: privateLinkServiceID,
 			},
 			Conditions: []metav1.Condition{{
-				Type:   string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady),
-				Status: metav1.ConditionTrue,
+				Type:               string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: 2,
 			}},
 		},
 	}

@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 5 complete; ready for Phase 6
+- **Status:** Phase 6 complete; ready for Phase 7
 - **Date:** 2026-10-08
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -740,12 +740,12 @@ trust policy in hub-owned assignment spec.
 
 ### Phase 6: Complete status and lifecycle
 
-- [ ] Publish `MultiClusterBackend` conditions and member summaries.
-- [ ] Publish Gateway API parent and Gateway conditions.
-- [ ] Track observed generations.
-- [ ] Implement selector-change withdrawal ordering.
-- [ ] Implement Gateway and backend finalizers.
-- [ ] Preserve fail-static behavior during controller outages.
+- [x] Publish `MultiClusterBackend` conditions and member summaries.
+- [x] Publish Gateway API parent and Gateway conditions.
+- [x] Track observed generations.
+- [x] Implement selector-change withdrawal ordering.
+- [x] Implement Gateway and backend finalizers.
+- [x] Preserve fail-static behavior during controller outages.
 
 **Exit criteria**
 

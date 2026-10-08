@@ -368,6 +368,7 @@ func resourceFromEndpoint(value armcdn.AFDEndpoint) Resource {
 	}
 	if value.Properties != nil {
 		result.Enabled = value.Properties.EnabledState != nil && *value.Properties.EnabledState == armcdn.EnabledStateEnabled
+		result.HostName = stringValue(value.Properties.HostName)
 		if value.Properties.ProvisioningState != nil {
 			result.ProvisioningState = ProvisioningState(*value.Properties.ProvisioningState)
 		}

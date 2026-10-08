@@ -42,6 +42,8 @@ const (
 
 	// OriginCleanupFinalizer prevents assignment deletion until its AFD origin is withdrawn.
 	OriginCleanupFinalizer = "networking.fleet.azure.com/afd-origin-cleanup"
+	// BackendCleanupFinalizer prevents backend deletion until all owned assignments are withdrawn.
+	BackendCleanupFinalizer = "networking.fleet.azure.com/afd-backend-cleanup"
 )
 
 // Reconciler reconciles MultiClusterBackend resources.
@@ -69,6 +71,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		}
 		return ctrl.Result{}, fmt.Errorf("get MultiClusterBackend %s: %w", req.NamespacedName, err)
 	}
+	if !backend.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, &backend)
+	}
 
 	selector, err := metav1.LabelSelectorAsSelector(&backend.Spec.ClusterSelector)
 	if err != nil {
@@ -94,6 +99,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
+	}
+	if addFinalizer(&backend, BackendCleanupFinalizer) {
+		if err := r.Update(ctx, &backend); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add MultiClusterBackend cleanup finalizer: %w", err)
+		}
 	}
 
 	assignments, err := r.reconcileAssignments(ctx, &backend, selectedMembers)
@@ -125,6 +135,47 @@ func (r *Reconciler) selectMembers(ctx context.Context, selector labels.Selector
 	}
 	sort.Strings(selected)
 	return selected, nil
+}
+
+func (r *Reconciler) reconcileDelete(ctx context.Context, backend *fleetnetv1alpha1.MultiClusterBackend) (reconcile.Result, error) {
+	if !containsFinalizer(backend, BackendCleanupFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	var assignments fleetnetv1alpha1.ServiceOriginAssignmentList
+	if err := r.List(ctx, &assignments); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list assignments during backend deletion: %w", err)
+	}
+	pending := false
+	for i := range assignments.Items {
+		assignment := &assignments.Items[i]
+		if assignment.Spec.BackendRef.UID != backend.UID {
+			continue
+		}
+		pending = true
+		if assignment.DeletionTimestamp.IsZero() {
+			if err := r.Delete(ctx, assignment); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("delete assignment %s/%s: %w", assignment.Namespace, assignment.Name, err)
+			}
+		}
+	}
+	if pending {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+	old := backend.DeepCopy()
+	removeFinalizer(backend, BackendCleanupFinalizer)
+	if err := r.Patch(ctx, backend, client.MergeFrom(old)); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("remove MultiClusterBackend cleanup finalizer: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
+func containsFinalizer(obj metav1.Object, finalizer string) bool {
+	for _, existing := range obj.GetFinalizers() {
+		if existing == finalizer {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Reconciler) reconcileAssignments(
@@ -238,7 +289,9 @@ func assignmentInfrastructureReady(assignment *fleetnetv1alpha1.ServiceOriginAss
 		assignment.Status.Conditions,
 		string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady),
 	)
-	return condition != nil && condition.Status == metav1.ConditionTrue
+	return assignment.Status.ObservedGeneration == assignment.Generation &&
+		condition != nil && condition.Status == metav1.ConditionTrue &&
+		condition.ObservedGeneration == assignment.Generation
 }
 
 func addFinalizer(obj metav1.Object, finalizer string) bool {
@@ -334,13 +387,6 @@ func (r *Reconciler) updateInvalidStatus(
 		Message:            "no ready origins are available",
 		ObservedGeneration: backend.Generation,
 	})
-	meta.SetStatusCondition(&backend.Status.Conditions, metav1.Condition{
-		Type:               string(fleetnetv1alpha1.MultiClusterBackendConditionProgrammed),
-		Status:             metav1.ConditionUnknown,
-		Reason:             string(fleetnetv1alpha1.MultiClusterBackendReasonProgramming),
-		Message:            "backend programming is pending valid member selection",
-		ObservedGeneration: backend.Generation,
-	})
 	return r.patchStatus(ctx, backend, old)
 }
 
@@ -352,7 +398,8 @@ func (r *Reconciler) updateSelectedStatus(
 ) error {
 	old := backend.DeepCopy()
 	backend.Status.ObservedGeneration = backend.Generation
-	backend.Status.SelectedClusters = int32(len(selectedMembers))
+	// Reconciliation rejects selections above the fixed limit of 40.
+	backend.Status.SelectedClusters = int32(len(selectedMembers)) // #nosec G115
 	backend.Status.ReadyOrigins = 0
 	backend.Status.Members = make([]fleetnetv1alpha1.MultiClusterBackendMemberStatus, 0, len(selectedMembers))
 	for _, memberName := range selectedMembers {
@@ -364,8 +411,21 @@ func (r *Reconciler) updateSelectedStatus(
 				string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady),
 			)
 			if infrastructureReady != nil {
-				ready = infrastructureReady.Status == metav1.ConditionTrue
-				if !ready && infrastructureReady.Reason != "" {
+				infrastructureCurrent := assignment.Status.ObservedGeneration == assignment.Generation &&
+					infrastructureReady.ObservedGeneration == assignment.Generation
+				ready = infrastructureCurrent && infrastructureReady.Status == metav1.ConditionTrue
+				if ready {
+					backend.Status.ReadyOrigins++
+					approval := meta.FindStatusCondition(
+						assignment.Status.Conditions,
+						string(fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved),
+					)
+					if approval == nil || approval.Status != metav1.ConditionTrue ||
+						approval.ObservedGeneration != assignment.Generation {
+						ready = false
+						reason = fleetnetv1alpha1.MultiClusterBackendMemberReasonApprovalPending
+					}
+				} else if infrastructureReady.Reason != "" {
 					reason = fleetnetv1alpha1.MultiClusterBackendMemberConditionReason(infrastructureReady.Reason)
 				}
 			}
@@ -374,7 +434,6 @@ func (r *Reconciler) updateSelectedStatus(
 		if ready {
 			status = metav1.ConditionTrue
 			reason = fleetnetv1alpha1.MultiClusterBackendMemberReasonReady
-			backend.Status.ReadyOrigins++
 		}
 		backend.Status.Members = append(backend.Status.Members, fleetnetv1alpha1.MultiClusterBackendMemberStatus{
 			ClusterName: memberName,
@@ -406,13 +465,6 @@ func (r *Reconciler) updateSelectedStatus(
 		Status:             resolvedStatus,
 		Reason:             string(resolvedReason),
 		Message:            resolvedMessage,
-		ObservedGeneration: backend.Generation,
-	})
-	meta.SetStatusCondition(&backend.Status.Conditions, metav1.Condition{
-		Type:               string(fleetnetv1alpha1.MultiClusterBackendConditionProgrammed),
-		Status:             metav1.ConditionUnknown,
-		Reason:             string(fleetnetv1alpha1.MultiClusterBackendReasonProgramming),
-		Message:            "Azure programming state is not yet available",
 		ObservedGeneration: backend.Generation,
 	})
 	return r.patchStatus(ctx, backend, old)

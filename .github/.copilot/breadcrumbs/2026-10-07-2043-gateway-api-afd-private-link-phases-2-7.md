@@ -353,24 +353,72 @@ not create infrastructure, program AFD, or approve Private Link connections.
 
 ### Phase 5: Implement POC Phase 6 - status and lifecycle
 
-- [ ] **Task 5.1: Write Gateway/route status and lifecycle tests first.**
+#### Phase 6 implementation
+
+- Added one coherent AFD Gateway orchestrator and a focused GatewayClass reconciler, registered
+  only behind `--enable-afd`, with the Phase 4 provider injected instead of discarded.
+- Restricted ownership to `azure-fleet-afd` and its exact controller name, one HTTP/80 listener,
+  the documented `PathPrefix /` route subset, same-namespace `MultiClusterBackend`, omitted
+  `backendRef.port`, Premium SKU, and a syntactically valid readable WAF policy.
+- Resolved current-generation assignments into the normalized model, excluded incomplete members,
+  and gated `Programmed=True` on provider readiness and current `InfrastructureReady` plus
+  `PrivateLinkApproved`.
+- Published current-generation Gateway, listener, route-parent, and backend conditions while
+  preserving route parent entries owned by other controllers. The Azure-assigned default endpoint
+  hostname is published as a Gateway hostname address when available.
+- Added stable Gateway/backend finalizers only after ownership begins. Gateway deletion verifies
+  and deletes only its tagged AFD parent; selector withdrawal deletes exact origins under a
+  verified parent before releasing assignment cleanup finalizers. External WAF, Services, ILBs,
+  and PLS resources remain outside all delete interfaces.
+- Kept provider failures fail-static for previously programmed resources and made stable observed
+  resources no-op/idempotent.
+- Generated Gateway API RBAC for GatewayClass, Gateway, HTTPRoute status and Gateway finalizers.
+
+#### Phase 6 tests-first evidence
+
+- The first focused test run failed on the intentionally absent `GatewayClassName`,
+  `validateGateway`, `buildRoute`, reconciler, finalizer, and request helpers.
+- Added table-driven validation and fake-provider lifecycle tests for class ownership, listener,
+  SKU/WAF, backend kind/namespace/port, current readiness and approval, provider readiness/errors,
+  observed generations, hostname addresses, no-early-programming, deletion, status ownership, and
+  ownership collisions.
+
+#### Phase 6 validation and course corrections
+
+- Focused and all relevant hub-controller race tests passed with repository-pinned Kubernetes 1.33
+  envtest assets; adjacent Phase 3/5 member assignment race tests also passed.
+- `go vet ./...` and repository-pinned focused `golangci-lint` v1.64.7 passed.
+- `make fmt`, controller-gen manifest/deepcopy generation, and `git diff --check` passed.
+- Generated deepcopy output was idempotent; generated RBAC contains the required Gateway API rules.
+- No module dependency changed, so `go mod tidy` produced no required module update.
+- Helm charts contain no hub Gateway manager deployment, so there was no applicable chart
+  lint/render target to change; Phase 7 remains entirely unimplemented.
+
+#### Phase 6 execution checklist
+
+Phase 6 starts from Phase 5 commit `96ff6444c3204ec8c6e464c32ea557b8d8e376cd`.
+The prior provider baseline is Phase 4 commit `54caae8f14cba7d8d6a9f632d2c7e3236aecedd9`.
+The approved plan below is being followed tests-first; Phase 7 provisioning and harness work remain
+explicitly out of scope.
+
+- [x] **Task 5.1: Write Gateway/route status and lifecycle tests first.**
   - Cover accepted/resolved/programmed gates, observed generations, incomplete members,
     selector-change withdrawal ordering, backend/Gateway deletion, ownership failures, and
     controller restart/fail-static behavior.
   - Success criteria: tests prevent early `Programmed=True` and unsafe deletion.
-- [ ] **Task 5.2: Implement GatewayClass, Gateway, and HTTPRoute reconcilers.**
+- [x] **Task 5.2: Implement GatewayClass, Gateway, and HTTPRoute reconcilers.**
   - Support only `azure-fleet-afd`, the documented HTTP subset, same-namespace
     `MultiClusterBackend`, Premium SKU, and required WAF policy.
   - Success criteria: parent and Gateway conditions follow Gateway API conventions.
-- [ ] **Task 5.3: Implement finalizers and withdrawal state machines.**
+- [x] **Task 5.3: Implement finalizers and withdrawal state machines.**
   - Remove an AFD origin before deleting a deselected assignment.
   - Delete only controller-owned AFD resources before removing Gateway/backend finalizers.
   - Success criteria: external WAF, Services, ILBs, and PLS resources are never deleted.
-- [ ] **Task 5.4: Preserve fail-static behavior.**
+- [x] **Task 5.4: Preserve fail-static behavior.**
   - Make reconciliation observational and idempotent so controller outage does not alter already
     programmed data-plane state.
   - Success criteria: restart tests preserve existing desired resources without recreation.
-- [ ] **Task 5.5: Validate, document, commit, and push Phase 6.**
+- [x] **Task 5.5: Validate, document, commit, and push Phase 6.**
   - Commit as `feat: complete Gateway status and lifecycle` and push.
   - Success criteria: all Phase 6 conditions and deletion-order tests pass.
 
@@ -421,11 +469,11 @@ not create infrastructure, program AFD, or approve Private Link connections.
 - [x] Phase 4 / Task 4.2 completed.
 - [x] Phase 4 / Task 4.3 completed.
 - [x] Phase 4 / Task 4.4 completed.
-- [ ] Phase 5 / Task 5.1 completed.
-- [ ] Phase 5 / Task 5.2 completed.
-- [ ] Phase 5 / Task 5.3 completed.
-- [ ] Phase 5 / Task 5.4 completed.
-- [ ] Phase 5 / Task 5.5 completed.
+- [x] Phase 5 / Task 5.1 completed.
+- [x] Phase 5 / Task 5.2 completed.
+- [x] Phase 5 / Task 5.3 completed.
+- [x] Phase 5 / Task 5.4 completed.
+- [x] Phase 5 / Task 5.5 completed.
 - [ ] Phase 6 / Task 6.1 completed.
 - [ ] Phase 6 / Task 6.2 completed.
 - [ ] Phase 6 / Task 6.3 completed.

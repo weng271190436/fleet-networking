@@ -14,6 +14,13 @@ package main
 //+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments/status,verbs=get
 //+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments/finalizers,verbs=update
 //+kubebuilder:rbac:groups=cluster.kubernetes-fleet.io,resources=memberclusters,verbs=get;list;watch
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get;list;watch
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/finalizers,verbs=update
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes/status,verbs=get;update;patch
 
 import (
 	"context"
@@ -40,6 +47,7 @@ import (
 	"go.goms.io/fleet/pkg/utils/cloudconfig/azure"
 
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
+	"go.goms.io/fleet-networking/pkg/controllers/hub/afdgateway"
 	"go.goms.io/fleet-networking/pkg/controllers/hub/multiclusterbackend"
 	"go.goms.io/fleet-networking/pkg/providers/azure/frontdoor"
 )
@@ -109,7 +117,7 @@ type dependencies struct {
 	loadAFDConfig    func(string, string) (*azure.CloudConfig, error)
 	newAFDProvider   func(*azure.CloudConfig, string) (*frontdoor.Provider, error)
 	newScheme        func() (*runtime.Scheme, error)
-	setupControllers func(controllerManager) error
+	setupControllers func(controllerManager, afdgateway.Provider) error
 }
 
 func productionDependencies() dependencies {
@@ -122,12 +130,15 @@ func productionDependencies() dependencies {
 		loadAFDConfig:  loadAFDConfiguration,
 		newAFDProvider: initAFDProvider,
 		newScheme:      newScheme,
-		setupControllers: func(manager controllerManager) error {
+		setupControllers: func(manager controllerManager, provider afdgateway.Provider) error {
 			mgr, ok := manager.(ctrl.Manager)
 			if !ok {
 				return errors.New("controller manager does not implement ctrl.Manager")
 			}
-			return (&multiclusterbackend.Reconciler{Client: mgr.GetClient()}).SetupWithManager(mgr)
+			if err := (&multiclusterbackend.Reconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+				return err
+			}
+			return afdgateway.SetupWithManager(mgr, provider)
 		},
 	}
 }
@@ -138,12 +149,14 @@ func run(options managerOptions, deps dependencies) error {
 		return fmt.Errorf("register controller schemes: %w", err)
 	}
 
+	var afdProvider afdgateway.Provider
 	if options.enableAFD {
 		cloudConfig, err := deps.loadAFDConfig(options.cloudConfigFile, options.afdResourceGroup)
 		if err != nil {
 			return fmt.Errorf("load Azure Front Door configuration: %w", err)
 		}
-		if _, err := deps.newAFDProvider(cloudConfig, options.afdResourceGroup); err != nil {
+		afdProvider, err = deps.newAFDProvider(cloudConfig, options.afdResourceGroup)
+		if err != nil {
 			return fmt.Errorf("create Azure Front Door provider: %w", err)
 		}
 		klog.InfoS("Azure Front Door provider is configured", "resourceGroup", options.afdResourceGroup)
@@ -165,7 +178,7 @@ func run(options managerOptions, deps dependencies) error {
 		return fmt.Errorf("create hub Gateway controller manager: %w", err)
 	}
 	if options.enableAFD {
-		if err := deps.setupControllers(mgr); err != nil {
+		if err := deps.setupControllers(mgr, afdProvider); err != nil {
 			return fmt.Errorf("set up hub Gateway controllers: %w", err)
 		}
 	}
@@ -217,7 +230,7 @@ func loadAFDConfiguration(cloudConfigPath, resourceGroup string) (*azure.CloudCo
 	return cloudConfig, nil
 }
 
-// initAFDProvider constructs the Phase 4 production provider. Gateway reconciliation is added in Phase 6.
+// initAFDProvider constructs the production provider injected into the AFD Gateway controller.
 func initAFDProvider(cloudConfig *azure.CloudConfig, resourceGroup string) (*frontdoor.Provider, error) {
 	authProvider, err := azclient.NewAuthProvider(&cloudConfig.ARMClientConfig, &cloudConfig.AzureAuthConfig)
 	if err != nil {

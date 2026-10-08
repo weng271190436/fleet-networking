@@ -128,6 +128,7 @@ func TestDelete_RemovesOwnedProfileAndNeverWAF(t *testing.T) {
 	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
+
 	clients.operations = nil
 
 	if err := provider.Delete(context.Background(), desired); err != nil {
@@ -140,6 +141,39 @@ func TestDelete_RemovesOwnedProfileAndNeverWAF(t *testing.T) {
 		if strings.HasPrefix(operation, "waf:") {
 			t.Fatalf("Delete attempted WAF operation %q", operation)
 		}
+	}
+}
+
+func TestWithdrawOrigins_VerifiesParentAndDeletesOnlyExactOrigins(t *testing.T) {
+	clients := newFakeClients()
+	provider := NewProvider("sub", "afd-rg", clients)
+	desired := testGateway()
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	clients.operations = nil
+
+	if err := provider.WithdrawOrigins(
+		context.Background(), desired, desired.Routes[0].Backends[0].OriginGroupName,
+		[]string{desired.Routes[0].Backends[0].Origins[0].Name},
+	); err != nil {
+		t.Fatalf("WithdrawOrigins() error = %v", err)
+	}
+	if got, want := clients.operations, []string{"profile:get", "origin:delete"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("withdraw operations = %#v, want %#v", got, want)
+	}
+	if _, ok := clients.resources[resourceKey(ResourceOrigin, desired.Routes[0].Backends[0].Origins[1].Name)]; !ok {
+		t.Fatal("unrelated origin was deleted")
+	}
+
+	clients.resources[resourceKey(ResourceProfile, ProfileName(desired))].Tags[TagGatewayUID] = "foreign"
+	clients.operations = nil
+	if err := provider.WithdrawOrigins(context.Background(), desired, "group", []string{"origin"}); err == nil ||
+		!strings.Contains(err.Error(), "ownership") {
+		t.Fatalf("WithdrawOrigins() error = %v, want ownership rejection", err)
+	}
+	if contains(clients.operations, "origin:delete") {
+		t.Fatalf("foreign parent allowed origin deletion: %#v", clients.operations)
 	}
 }
 
