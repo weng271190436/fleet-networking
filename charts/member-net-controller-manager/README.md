@@ -115,9 +115,16 @@ helm upgrade member-net-controller-manager ./charts/member-net-controller-manage
 | affinity | The node affinity to use for pod scheduling | `{}` |
 | tolerations | The toleration to use for pod scheduling | `[]` |
 | enableTrafficManagerFeature | Set to true to enable the Azure Traffic Manager feature. | `false` |
-| enableAFDPrivateLinkFeature | Set to true to enable experimental member-side AFD Private Link origin discovery. | `false` |
+| enableAFDPrivateLinkFeature | Set to true to enable experimental member-side AFD Private Link origin discovery and connection approval. | `false` |
+| afdRequesterSubscriptionAllowlist | Optional comma-separated requester subscription UUIDs allowed for AFD Private Link approval. Empty skips the subscription check. | `""` |
 | enableNetworkingFeatures | Set to true to enable Networking Controllers on member cluster. | `true` |
 | azureCloudConfig | The Azure cloud provider configuration | **required if Traffic Manager or AFD Private Link is enabled** |
+
+`afdRequesterSubscriptionAllowlist` is trusted member-controller configuration, not assignment
+input. When non-empty, every entry must be a UUID and approval fails closed if Azure omits or
+returns a malformed or unallowlisted managed private endpoint subscription. An empty value follows
+the POC contract by skipping the subscription check. The request token is correlation data, not a
+credential, and this control does not verify tenant identity.
 
 ## Override Azure cloud config
 

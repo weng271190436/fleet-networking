@@ -44,6 +44,9 @@ spec:
             - --add_dir_header
             - --enable-traffic-manager-feature={{ .Values.enableTrafficManagerFeature }}
             - --enable-afd-private-link-feature={{ .Values.enableAFDPrivateLinkFeature }}
+            {{- if .Values.afdRequesterSubscriptionAllowlist }}
+            - --afd-requester-subscription-allowlist={{ .Values.afdRequesterSubscriptionAllowlist | quote }}
+            {{- end }}
             - --enable-networking-features={{ .Values.enableNetworkingFeatures }}
             {{- if or .Values.enableTrafficManagerFeature .Values.enableAFDPrivateLinkFeature }}
             - --cloud-config=/etc/kubernetes/provider/azure.json

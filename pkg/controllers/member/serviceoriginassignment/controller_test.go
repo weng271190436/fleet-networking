@@ -285,6 +285,7 @@ func testAssignment() *fleetnetv1alpha1.ServiceOriginAssignment {
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:  "fleet-member-member-a",
 			Name:       "echo-assignment",
+			UID:        testAssignmentUID,
 			Generation: 3,
 		},
 		Spec: fleetnetv1alpha1.ServiceOriginAssignmentSpec{
@@ -292,6 +293,9 @@ func testAssignment() *fleetnetv1alpha1.ServiceOriginAssignment {
 				Namespace: "app",
 				Name:      "echo",
 				Port:      80,
+			},
+			Approval: fleetnetv1alpha1.ServiceOriginAssignmentApproval{
+				RequestToken: testRequestToken,
 			},
 		},
 	}

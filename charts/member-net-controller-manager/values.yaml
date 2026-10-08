@@ -64,6 +64,7 @@ affinity: {}
 
 enableTrafficManagerFeature: false
 enableAFDPrivateLinkFeature: false
+afdRequesterSubscriptionAllowlist: ""
 enableNetworkingFeatures: true
 
 azureCloudConfig:

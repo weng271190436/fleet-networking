@@ -254,22 +254,102 @@ not create infrastructure, program AFD, or approve Private Link connections.
 
 ### Phase 4: Implement POC Phase 5 - automated PLS approval
 
-- [ ] **Task 4.1: Write approval matcher tests first.**
+- [x] **Task 4.1: Write approval matcher tests first.**
   - Cover exact assignment UID/token message, PLS ID, pending state, current generation, Service/PLS
     revalidation, optional member-local subscription allowlist, unrelated connections, deleted
     assignments, and replay attempts.
   - Success criteria: only one exact active connection can match.
-- [ ] **Task 4.2: Implement the PLS Azure client adapter.**
+- [x] **Task 4.2: Implement the PLS Azure client adapter.**
   - Reuse `armnetwork/v4` v4.3.0 for list/get/update connection operations.
   - Keep list and approval behind narrow interfaces.
   - Success criteria: approval updates only the matched connection to `Approved`.
-- [ ] **Task 4.3: Integrate approval with the member reconciler.**
+- [x] **Task 4.3: Integrate approval with the member reconciler.**
   - Build the exact `fleet:<assignment-uid>:<request-token>` message, revalidate immediately before
     update, report actionable pending/failure conditions, and publish `PrivateLinkApproved`.
   - Success criteria: unrelated pending connections remain untouched.
-- [ ] **Task 4.4: Validate, document, commit, and push Phase 5.**
+- [x] **Task 4.4: Validate, document, commit, and push Phase 5.**
   - Commit as `feat: automate PLS connection approval` and push after focused validation.
   - Success criteria: Phase 5 exit criteria pass and no broad approval path exists.
+
+#### Phase 5 execution plan
+
+1. **Tests first**
+   - Add matcher, controller, adapter, and configuration tests for exact complete request messages,
+     exact PLS identity, Pending/Approved state, assignment generation/status, immediate Service and
+     PLS revalidation, optional requester-subscription policy, replay, ambiguity, deletion, and
+     Azure errors.
+2. **Narrow Azure adapter**
+   - Use the pinned `armnetwork/v4` PLS connection list/get/update operations only.
+   - Preserve the fetched connection fields while changing only its connection status to
+     `Approved`.
+3. **Approval reconciliation**
+   - Continue only after Phase 3 discovery is ready, find exactly one exact-message match, and
+     re-fetch the assignment, Service, PLS, and connection immediately before approval.
+   - Publish actionable `PrivateLinkApproved` conditions without rejecting or changing unrelated
+     connections.
+4. **Trusted member configuration**
+   - Parse an optional comma-separated subscription UUID allowlist at startup, normalize case,
+     deduplicate entries, and fail closed on absent/malformed/unlisted managed endpoint IDs when
+     configured.
+5. **Validation and delivery**
+   - Run focused and adjacent race tests, vet, pinned lint, goimports, Helm lint/render, module,
+     RBAC, and diff checks before the single Phase 5 commit.
+
+#### Phase 5 implementation
+
+- Phase 5 starts from Phase 4 commit `54caae8f14cba7d8d6a9f632d2c7e3236aecedd9`.
+- Added exact-match approval logic for
+  `fleet:<assignment-uid>:<request-token>`; no prefix, substring, list-order, or name-prefix match is
+  accepted.
+- Added a narrow `PrivateEndpointConnectionClient` and `armnetwork/v4` adapter using only PLS
+  private endpoint connection list, get, and update. The update is addressed by exact PLS resource
+  ID and connection name and changes only the copied connection state to `Approved`.
+- Extended the Phase 3 member reconciler to publish current discovery status before approval, find
+  exactly one candidate, and immediately re-fetch/revalidate assignment UID/generation/token/status,
+  local Service/ILB/PLS, exact Pending connection message/state, and configured subscription.
+- Added `PrivateLinkApproved=True/ConnectionApproved`,
+  `Unknown/ConnectionPending`, `False/ApprovalValidationFailed`, and
+  `Unknown/PrivateLinkApprovalFailed` reporting. Unrelated connections are never modified.
+- Added the member-local `afd-requester-subscription-allowlist` flag and
+  `afdRequesterSubscriptionAllowlist` chart value. Empty skips the subscription check; configured
+  missing, malformed, or unmatched managed private endpoint IDs fail closed.
+- Documented the least-privilege Azure read/write actions separately from unchanged Kubernetes
+  RBAC. No tenant-verification claim or inferred tenant lookup was added.
+
+#### Phase 5 tests-first evidence
+
+- The first focused test run failed to compile on the intentionally absent
+  `findApprovalConnection`, `ParseRequesterSubscriptionAllowlist`,
+  `PrivateEndpointConnectionClient`, and reconciler fields.
+- The completed table-driven tests cover exact message and PLS matching, Pending and already
+  Approved states, token mismatch/replay, multiple matches, allowlist normalization and fail-closed
+  cases, assignment deletion/termination/generation changes, current status, Service and PLS
+  revalidation, unrelated connections, and Azure list/get/update errors.
+
+#### Phase 5 course corrections
+
+- The first broad member race run lacked `KUBEBUILDER_ASSETS`; rerunning with the repository-pinned
+  Kubernetes 1.33 envtest assets passed all member-controller suites.
+- The globally installed `golangci-lint` was newer than the repository configuration format and
+  rejected it. The repository-pinned v1.64.7 binary passed the focused packages.
+- Helm emitted a warning for an unrelated locally installed `helm-unittest` plugin using an
+  unsupported `platformHooks` field; both lint invocations and the enabled render still succeeded.
+- No API/RBAC markers or module dependencies changed, so regeneration and `go mod tidy` were not
+  required.
+
+#### Phase 5 validation
+
+- Focused race tests passed for the ServiceOriginAssignment controller/client/config and member
+  manager construction.
+- All member-controller race tests passed with repository-pinned Kubernetes 1.33 envtest assets.
+- Adjacent Phase 4 normalized gateway-model race tests passed.
+- `go vet ./...` passed.
+- Repository-pinned focused `golangci-lint` v1.64.7 passed.
+- `make fmt` (Go formatting plus goimports) passed without unrelated changes.
+- Helm lint passed for default and feature-enabled member chart values; rendering contains both the
+  feature flag and normalized allowlist argument.
+- Kubernetes RBAC and `go.mod`/`go.sum` are unchanged.
+- `git diff --check` passed.
 
 ### Phase 5: Implement POC Phase 6 - status and lifecycle
 
@@ -337,10 +417,10 @@ not create infrastructure, program AFD, or approve Private Link connections.
 - [x] Phase 3 / Task 3.3 completed.
 - [x] Phase 3 / Task 3.4 completed.
 - [x] Phase 3 / Task 3.5 completed.
-- [ ] Phase 4 / Task 4.1 completed.
-- [ ] Phase 4 / Task 4.2 completed.
-- [ ] Phase 4 / Task 4.3 completed.
-- [ ] Phase 4 / Task 4.4 completed.
+- [x] Phase 4 / Task 4.1 completed.
+- [x] Phase 4 / Task 4.2 completed.
+- [x] Phase 4 / Task 4.3 completed.
+- [x] Phase 4 / Task 4.4 completed.
 - [ ] Phase 5 / Task 5.1 completed.
 - [ ] Phase 5 / Task 5.2 completed.
 - [ ] Phase 5 / Task 5.3 completed.

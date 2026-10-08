@@ -8,6 +8,7 @@ package serviceoriginassignment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -49,14 +50,23 @@ type PrivateLinkServiceClient interface {
 	List(ctx context.Context, resourceGroupName string) ([]*armnetwork.PrivateLinkService, error)
 }
 
+// PrivateEndpointConnectionClient is the narrow ARM surface used for connection approval.
+type PrivateEndpointConnectionClient interface {
+	List(ctx context.Context, privateLinkServiceID string) ([]*armnetwork.PrivateEndpointConnection, error)
+	Get(ctx context.Context, privateLinkServiceID, connectionName string) (*armnetwork.PrivateEndpointConnection, error)
+	Approve(ctx context.Context, privateLinkServiceID string, connection *armnetwork.PrivateEndpointConnection) error
+}
+
 // Reconciler discovers origin infrastructure for a ServiceOriginAssignment.
 type Reconciler struct {
 	HubClient    client.Client
 	MemberClient client.Client
 
-	ResourceGroupName        string
-	LoadBalancerClient       LoadBalancerClient
-	PrivateLinkServiceClient PrivateLinkServiceClient
+	ResourceGroupName               string
+	LoadBalancerClient              LoadBalancerClient
+	PrivateLinkServiceClient        PrivateLinkServiceClient
+	PrivateEndpointConnectionClient PrivateEndpointConnectionClient
+	RequesterSubscriptionAllowlist  map[string]struct{}
 
 	InfrastructurePollInterval time.Duration
 }
@@ -83,6 +93,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	status := desiredStatus(&assignment)
+	setCondition(&status, assignment.Generation,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+		metav1.ConditionUnknown, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionPending,
+		"Private Link approval is waiting for current Service and infrastructure validation")
+	if !assignment.DeletionTimestamp.IsZero() {
+		setCondition(&status, assignment.Generation,
+			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+			metav1.ConditionFalse, fleetnetv1alpha1.ServiceOriginAssignmentReasonApprovalValidationFailed,
+			"assignment is terminating; Private Link approval is disabled")
+		return ctrl.Result{}, r.updateStatus(ctx, &assignment, status)
+	}
 	serviceKey := types.NamespacedName{
 		Namespace: assignment.Spec.ServiceRef.Namespace,
 		Name:      assignment.Spec.ServiceRef.Name,
@@ -164,7 +185,97 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady,
 		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonInfrastructureReady,
 		fmt.Sprintf("internal load balancer %s is associated with Private Link Service %s", ingressIP, origin.PrivateLinkServiceID))
-	return ctrl.Result{}, r.updateStatus(ctx, &assignment, status)
+	if r.PrivateEndpointConnectionClient == nil {
+		return ctrl.Result{}, r.updateStatus(ctx, &assignment, status)
+	}
+	if err := r.updateStatus(ctx, &assignment, status); err != nil {
+		return ctrl.Result{}, err
+	}
+	return r.reconcileApproval(ctx, req.NamespacedName, &assignment)
+}
+
+func (r *Reconciler) reconcileApproval(
+	ctx context.Context,
+	assignmentKey types.NamespacedName,
+	assignment *fleetnetv1alpha1.ServiceOriginAssignment,
+) (ctrl.Result, error) {
+	privateLinkServiceID := assignment.Status.Origin.PrivateLinkServiceID
+	connections, err := r.PrivateEndpointConnectionClient.List(ctx, privateLinkServiceID)
+	if err != nil {
+		return ctrl.Result{}, r.reportApprovalError(ctx, assignment,
+			fmt.Errorf("list candidate Private Link connections: %w", err))
+	}
+
+	connection, approved, err := findApprovalConnection(
+		assignment, privateLinkServiceID, privateLinkServiceID, connections, r.RequesterSubscriptionAllowlist,
+	)
+	if err != nil {
+		status := desiredStatus(assignment)
+		setCondition(&status, assignment.Generation,
+			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+			metav1.ConditionFalse, fleetnetv1alpha1.ServiceOriginAssignmentReasonApprovalValidationFailed,
+			err.Error())
+		if err := r.updateStatus(ctx, assignment, status); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: r.pollInterval()}, nil
+	}
+	if connection == nil {
+		status := desiredStatus(assignment)
+		setCondition(&status, assignment.Generation,
+			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+			metav1.ConditionUnknown, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionPending,
+			"waiting for exactly one Private Link connection with the assignment request message")
+		if err := r.updateStatus(ctx, assignment, status); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: r.pollInterval()}, nil
+	}
+	if approved {
+		status := desiredStatus(assignment)
+		setCondition(&status, assignment.Generation,
+			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+			metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionApproved,
+			"the matching Private Link connection is approved")
+		return ctrl.Result{}, r.updateStatus(ctx, assignment, status)
+	}
+
+	currentAssignment, currentConnection, err := r.revalidateApproval(
+		ctx, assignmentKey, assignment, privateLinkServiceID, strings.TrimSpace(*connection.Name),
+	)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		var validationErr *approvalValidationError
+		if errors.As(err, &validationErr) {
+			statusAssignment := assignment
+			if currentAssignment != nil {
+				statusAssignment = currentAssignment
+			}
+			status := desiredStatus(statusAssignment)
+			setCondition(&status, statusAssignment.Generation,
+				fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+				metav1.ConditionFalse, fleetnetv1alpha1.ServiceOriginAssignmentReasonApprovalValidationFailed,
+				validationErr.Error())
+			if err := r.updateStatus(ctx, statusAssignment, status); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: r.pollInterval()}, nil
+		}
+		return ctrl.Result{}, r.reportApprovalError(ctx, assignment, err)
+	}
+	if err := r.PrivateEndpointConnectionClient.Approve(ctx, privateLinkServiceID, currentConnection); err != nil {
+		return ctrl.Result{}, r.reportApprovalError(ctx, currentAssignment,
+			fmt.Errorf("approve matching Private Link connection: %w", err))
+	}
+
+	status := desiredStatus(currentAssignment)
+	setCondition(&status, currentAssignment.Generation,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionApproved,
+		"approved the matching Private Link connection")
+	return ctrl.Result{}, r.updateStatus(ctx, currentAssignment, status)
 }
 
 func (r *Reconciler) discoverOrigin(
@@ -204,6 +315,110 @@ func (r *Reconciler) discoverOrigin(
 		fmt.Sprintf("Private Link Service associated with load balancer frontend %s was not found in resource group %s", frontendID, resourceGroupName), nil
 }
 
+type approvalValidationError struct {
+	message string
+}
+
+func (e *approvalValidationError) Error() string {
+	return e.message
+}
+
+func approvalValidationErrorf(format string, args ...interface{}) error {
+	return &approvalValidationError{message: fmt.Sprintf(format, args...)}
+}
+
+func (r *Reconciler) revalidateApproval(
+	ctx context.Context,
+	assignmentKey types.NamespacedName,
+	previousAssignment *fleetnetv1alpha1.ServiceOriginAssignment,
+	privateLinkServiceID, connectionName string,
+) (*fleetnetv1alpha1.ServiceOriginAssignment, *armnetwork.PrivateEndpointConnection, error) {
+	var current fleetnetv1alpha1.ServiceOriginAssignment
+	if err := r.HubClient.Get(ctx, assignmentKey, &current); err != nil {
+		return nil, nil, fmt.Errorf("re-fetch ServiceOriginAssignment immediately before approval: %w", err)
+	}
+	if !current.DeletionTimestamp.IsZero() {
+		return &current, nil, approvalValidationErrorf("assignment is terminating")
+	}
+	if current.UID != previousAssignment.UID || current.Generation != previousAssignment.Generation ||
+		current.Spec.Approval.RequestToken != previousAssignment.Spec.Approval.RequestToken {
+		return &current, nil, approvalValidationErrorf("assignment UID, generation, or request token changed before approval")
+	}
+	if current.Status.ObservedGeneration != current.Generation || current.Status.Origin == nil ||
+		!strings.EqualFold(strings.TrimSpace(current.Status.Origin.PrivateLinkServiceID), strings.TrimSpace(privateLinkServiceID)) ||
+		!meta.IsStatusConditionPresentAndEqual(current.Status.Conditions,
+			string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady), metav1.ConditionTrue) {
+		return &current, nil, approvalValidationErrorf("assignment discovery status is not current and ready")
+	}
+
+	serviceKey := types.NamespacedName{
+		Namespace: current.Spec.ServiceRef.Namespace,
+		Name:      current.Spec.ServiceRef.Name,
+	}
+	var service corev1.Service
+	if err := r.MemberClient.Get(ctx, serviceKey, &service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return &current, nil, approvalValidationErrorf("member Service %s was deleted before approval", serviceKey)
+		}
+		return nil, nil, fmt.Errorf("re-fetch member Service %s immediately before approval: %w", serviceKey, err)
+	}
+	if !serviceHasPort(&service, current.Spec.ServiceRef.Port) ||
+		service.Spec.Type != corev1.ServiceTypeLoadBalancer ||
+		!strings.EqualFold(strings.TrimSpace(service.Annotations[objectmeta.ServiceAnnotationAzureLoadBalancerInternal]), "true") {
+		return &current, nil, approvalValidationErrorf("member Service %s is no longer a valid internal LoadBalancer Service", serviceKey)
+	}
+	ingressIP := readyIngressIP(&service)
+	if ingressIP == "" || ingressIP != current.Status.Origin.LoadBalancerAddress {
+		return &current, nil, approvalValidationErrorf("member Service %s load balancer address changed before approval", serviceKey)
+	}
+	resourceGroupName := strings.TrimSpace(service.Annotations[objectmeta.ServiceAnnotationLoadBalancerResourceGroup])
+	if resourceGroupName == "" {
+		resourceGroupName = r.ResourceGroupName
+	}
+	origin, _, _, err := r.discoverOrigin(ctx, resourceGroupName, ingressIP)
+	if err != nil {
+		return nil, nil, fmt.Errorf("revalidate Azure origin immediately before approval: %w", err)
+	}
+	if origin == nil || !strings.EqualFold(strings.TrimSpace(origin.PrivateLinkServiceID), strings.TrimSpace(privateLinkServiceID)) {
+		return &current, nil, approvalValidationErrorf("discovered Private Link Service changed before approval")
+	}
+
+	connection, err := r.PrivateEndpointConnectionClient.Get(ctx, privateLinkServiceID, connectionName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("re-fetch matching Private Link connection immediately before approval: %w", err)
+	}
+	validatedConnection, approved, err := findApprovalConnection(
+		&current, privateLinkServiceID, origin.PrivateLinkServiceID,
+		[]*armnetwork.PrivateEndpointConnection{connection}, r.RequesterSubscriptionAllowlist,
+	)
+	if err != nil {
+		return &current, nil, approvalValidationErrorf("%v", err)
+	}
+	if validatedConnection == nil {
+		return &current, nil, approvalValidationErrorf("matching Private Link connection request message changed before approval")
+	}
+	if approved {
+		return &current, nil, approvalValidationErrorf("matching Private Link connection state changed before approval")
+	}
+	return &current, validatedConnection, nil
+}
+
+func (r *Reconciler) reportApprovalError(
+	ctx context.Context,
+	assignment *fleetnetv1alpha1.ServiceOriginAssignment,
+	approvalErr error,
+) error {
+	status := desiredStatus(assignment)
+	setCondition(&status, assignment.Generation,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+		metav1.ConditionUnknown, fleetnetv1alpha1.ServiceOriginAssignmentReasonPrivateLinkApprovalFailed,
+		approvalErr.Error())
+	if err := r.updateStatus(ctx, assignment, status); err != nil {
+		return errors.Join(approvalErr, err)
+	}
+	return approvalErr
+}
+
 func (r *Reconciler) updateStatus(
 	ctx context.Context,
 	assignment *fleetnetv1alpha1.ServiceOriginAssignment,
@@ -232,7 +447,8 @@ func desiredStatus(assignment *fleetnetv1alpha1.ServiceOriginAssignment) fleetne
 	}
 	for _, condition := range assignment.Status.Conditions {
 		if condition.Type == string(fleetnetv1alpha1.ServiceOriginAssignmentConditionServiceResolved) ||
-			condition.Type == string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady) {
+			condition.Type == string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady) ||
+			condition.Type == string(fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved) {
 			status.Conditions = append(status.Conditions, condition)
 		}
 	}

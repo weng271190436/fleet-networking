@@ -77,8 +77,12 @@ var (
 	isV1Alpha1APIEnabled = flag.Bool("enable-v1alpha1-apis", false, "If set, the agents will watch for the v1alpha1 APIs. This flag is deprecated and will be removed in future releases.")
 	isV1Beta1APIEnabled  = flag.Bool("enable-v1beta1-apis", true, "If set, the agents will watch for the v1beta1 APIs.")
 
-	enableTrafficManagerFeature = flag.Bool("enable-traffic-manager-feature", true, "If set, the traffic manager feature will be enabled.")
-	enableAFDPrivateLinkFeature = flag.Bool("enable-afd-private-link-feature", false, "If set, the experimental AFD Private Link member origin discovery feature will be enabled.")
+	enableTrafficManagerFeature       = flag.Bool("enable-traffic-manager-feature", true, "If set, the traffic manager feature will be enabled.")
+	enableAFDPrivateLinkFeature       = flag.Bool("enable-afd-private-link-feature", false, "If set, the experimental AFD Private Link member origin discovery feature will be enabled.")
+	afdRequesterSubscriptionAllowlist = flag.String(
+		"afd-requester-subscription-allowlist", "",
+		"Optional comma-separated requester subscription UUIDs allowed for AFD Private Link approval.",
+	)
 
 	enableNetworkingFeatures = flag.Bool("enable-networking-features", true, "If set, the networking features will be enabled. When disabled, only heartbeat functionality is preserved.")
 
@@ -382,17 +386,25 @@ func setupControllersWithManager(ctx context.Context, hubMgr, memberMgr manager.
 
 	if *enableAFDPrivateLinkFeature {
 		klog.V(1).InfoS("AFD Private Link feature is enabled; creating Azure clients")
-		loadBalancerClient, privateLinkServiceClient, err := initAFDPrivateLinkAzureClients(cloudConfig)
+		requesterSubscriptionAllowlist, err := serviceoriginassignment.ParseRequesterSubscriptionAllowlist(
+			*afdRequesterSubscriptionAllowlist,
+		)
+		if err != nil {
+			return fmt.Errorf("invalid AFD requester subscription allowlist: %w", err)
+		}
+		loadBalancerClient, privateLinkServiceClient, privateEndpointConnectionClient, err := initAFDPrivateLinkAzureClients(cloudConfig)
 		if err != nil {
 			klog.ErrorS(err, "Unable to create Azure AFD Private Link discovery clients")
 			return err
 		}
 		if err := (&serviceoriginassignment.Reconciler{
-			HubClient:                hubClient,
-			MemberClient:             memberClient,
-			ResourceGroupName:        cloudConfig.ResourceGroup,
-			LoadBalancerClient:       loadBalancerClient,
-			PrivateLinkServiceClient: privateLinkServiceClient,
+			HubClient:                       hubClient,
+			MemberClient:                    memberClient,
+			ResourceGroupName:               cloudConfig.ResourceGroup,
+			LoadBalancerClient:              loadBalancerClient,
+			PrivateLinkServiceClient:        privateLinkServiceClient,
+			PrivateEndpointConnectionClient: privateEndpointConnectionClient,
+			RequesterSubscriptionAllowlist:  requesterSubscriptionAllowlist,
 		}).SetupWithManager(hubMgr, memberMgr); err != nil {
 			klog.ErrorS(err, "Unable to create ServiceOriginAssignment controller")
 			return err
@@ -459,10 +471,15 @@ func initAzureNetworkClients(cloudConfig *azure.CloudConfig) (publicipaddresscli
 
 func initAFDPrivateLinkAzureClients(
 	cloudConfig *azure.CloudConfig,
-) (serviceoriginassignment.LoadBalancerClient, serviceoriginassignment.PrivateLinkServiceClient, error) {
+) (
+	serviceoriginassignment.LoadBalancerClient,
+	serviceoriginassignment.PrivateLinkServiceClient,
+	serviceoriginassignment.PrivateEndpointConnectionClient,
+	error,
+) {
 	authProvider, err := azclient.NewAuthProvider(&cloudConfig.ARMClientConfig, &cloudConfig.AzureAuthConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create Azure auth provider: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create Azure auth provider: %w", err)
 	}
 
 	factoryConfig := &azclient.ClientFactoryConfig{
@@ -471,7 +488,7 @@ func initAFDPrivateLinkAzureClients(
 	}
 	options, err := azclient.GetDefaultResourceClientOption(&cloudConfig.ARMClientConfig, factoryConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get default resource client option: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get default resource client option: %w", err)
 	}
 	if rateLimitPolicy := ratelimit.NewRateLimitPolicy(cloudConfig.Config); rateLimitPolicy != nil {
 		options.ClientOptions.PerCallPolicies = append(options.ClientOptions.PerCallPolicies, rateLimitPolicy)
@@ -479,8 +496,10 @@ func initAFDPrivateLinkAzureClients(
 
 	clientFactory, err := armnetwork.NewClientFactory(cloudConfig.SubscriptionID, authProvider.GetAzIdentity(), options)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create Azure network client factory: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create Azure network client factory: %w", err)
 	}
+	privateLinkServicesClient := clientFactory.NewPrivateLinkServicesClient()
 	return serviceoriginassignment.NewAzureLoadBalancerClient(clientFactory.NewLoadBalancersClient()),
-		serviceoriginassignment.NewAzurePrivateLinkServiceClient(clientFactory.NewPrivateLinkServicesClient()), nil
+		serviceoriginassignment.NewAzurePrivateLinkServiceClient(privateLinkServicesClient),
+		serviceoriginassignment.NewAzurePrivateEndpointConnectionClient(privateLinkServicesClient), nil
 }

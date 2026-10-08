@@ -2,8 +2,8 @@
 
 ## Plan status
 
-- **Status:** Phase 4 complete; ready for Phase 5
-- **Date:** 2026-10-07
+- **Status:** Phase 5 complete; ready for Phase 6
+- **Date:** 2026-10-08
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
 - **Base branch:** `pr/400`
@@ -595,6 +595,17 @@ Grant each member controller:
 A member must not create assignments, modify assignment spec, modify another member namespace, or
 write Gateway and backend status.
 
+The member Azure role should be scoped to its member-owned PLS resources and include only
+`Microsoft.Network/privateLinkServices/read`,
+`Microsoft.Network/privateLinkServices/privateEndpointConnections/read`, and
+`Microsoft.Network/privateLinkServices/privateEndpointConnections/write` for Phase 5. These are
+Azure permissions and do not require additional Kubernetes RBAC. An optional member chart value,
+`afdRequesterSubscriptionAllowlist`, supplies comma-separated requester subscription UUIDs from
+trusted member-controller configuration. Values are normalized case-insensitively and validated at
+startup. When configured, a missing, malformed, or unlisted subscription in the managed private
+endpoint resource ID fails closed; an empty value skips the subscription check. This check does not
+and cannot establish requester tenant identity.
+
 ### Kubernetes RBAC
 
 Generate and review RBAC for:
@@ -714,12 +725,12 @@ trust policy in hub-owned assignment spec.
 
 ### Phase 5: Automate PLS approval
 
-- [ ] Include the assignment token in the AFD Private Link request message.
-- [ ] Add a member Azure client for PLS private endpoint connections.
-- [ ] Find the matching pending connection.
-- [ ] Enforce token, PLS, assignment, connection-state, and configured subscription checks.
-- [ ] Approve only the matching connection.
-- [ ] Publish `PrivateLinkApproved`.
+- [x] Include the assignment token in the AFD Private Link request message.
+- [x] Add a member Azure client for PLS private endpoint connections.
+- [x] Find the matching pending connection.
+- [x] Enforce token, PLS, assignment, connection-state, and configured subscription checks.
+- [x] Approve only the matching connection.
+- [x] Publish `PrivateLinkApproved`.
 
 **Exit criteria**
 
