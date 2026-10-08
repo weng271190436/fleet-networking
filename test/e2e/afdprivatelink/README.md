@@ -538,8 +538,10 @@ make phase7-e2e-setup
 
 Then resume the human checklist at section 7.1 and capture new stage-labelled evidence.
 
-Setup traps failure and invokes bounded cleanup automatically. If automatic cleanup reports an
-error, retain the run ID/state file, fix Azure CLI connectivity or authorization, then run:
+Setup preserves the partially provisioned environment after a failure so you can inspect it, fix
+the issue, and rerun setup with the same run ID. It captures diagnostics but does not delete Azure
+or Kubernetes resources automatically. Billable resources remain active until setup succeeds or
+you explicitly run:
 
 ```bash
 # MUTATING / DESTRUCTIVE, but bounded to exact validated run resources

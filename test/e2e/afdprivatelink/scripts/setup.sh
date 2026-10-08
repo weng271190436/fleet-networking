@@ -13,7 +13,7 @@ initialize_names
 require_mutation_approval
 "${SCRIPT_DIR}/preflight.sh"
 
-cleanup_on_failure() {
+report_failure() {
     local status=$?
     if (( status != 0 )); then
         if [[ -f "${AFD_PLS_E2E_KUBECONFIG}" ]]; then
@@ -44,12 +44,18 @@ cleanup_on_failure() {
             } >"${diagnostics}" 2>&1
             echo "setup diagnostics written to ${diagnostics}" >&2
         fi
-        echo "setup failed; invoking bounded cleanup" >&2
-        "${SCRIPT_DIR}/cleanup.sh" || true
+        cat >&2 <<EOF
+setup failed; the partially provisioned environment was preserved for diagnosis.
+After fixing the issue, retry with:
+  make phase7-e2e-setup
+To delete the exact tagged run resources manually, run:
+  make phase7-e2e-cleanup
+Billable resources remain until setup completes or cleanup is run explicitly.
+EOF
     fi
     exit "${status}"
 }
-trap cleanup_on_failure EXIT INT TERM
+trap report_failure EXIT INT TERM
 
 umask 077
 mkdir -p "${AFD_PLS_E2E_ARTIFACT_DIR}"

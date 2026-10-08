@@ -661,6 +661,9 @@ The approved preparation work is to make the harness self-contained without runn
   cleanup and retained `.phase7-p7-20261008.results.setup-failure.log`.
 - The complete human checklist was not performed. Tasks 6.4-6.6 remain incomplete, and this
   in-progress runbook commit must not be reported as Phase 7 completion.
+- At the user's request, setup failures now preserve the partially provisioned environment for
+  manual diagnosis and continuation. Diagnostics still run automatically, but cleanup requires an
+  explicit `make phase7-e2e-cleanup`; billable resources remain until the operator runs it.
 
 ## Before/After Comparison
 
