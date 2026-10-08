@@ -49,8 +49,17 @@ HELM_NO_PLUGINS=1 helm lint "${REPO_ROOT}/charts/member-net-controller-manager" 
     --set image.digest="sha256:$(printf '2%.0s' {1..64})" \
     --set crdInstaller.enabled=true \
     --set crdInstaller.image.digest="sha256:$(printf '3%.0s' {1..64})" \
-    --set config.staticTokenSecret=hub-token \
+    --set config.provider=azure \
+    --set refreshtoken.digest="sha256:$(printf '4%.0s' {1..64})" \
     --set azure.clientid=00000000-0000-0000-0000-000000000000 >/dev/null
+HELM_NO_PLUGINS=1 helm template phase7-registration "${REPO_ROOT}/examples/getting-started/charts/hub" \
+    --namespace fleet-system --set-string userNS=afd-pls-e2e \
+    --set-string 'memberClusterConfigs[0].memberID=member-1' \
+    --set-string 'memberClusterConfigs[0].principalID=00000000-0000-0000-0000-000000000001' \
+    --set-string 'memberClusterConfigs[1].memberID=member-2' \
+    --set-string 'memberClusterConfigs[1].principalID=00000000-0000-0000-0000-000000000002' \
+    >/dev/null
+docker buildx imagetools inspect ghcr.io/azure/fleet/refresh-token:v0.1.0 >/dev/null
 module_cache="$(go env GOMODCACHE)"
 for crd_input in \
     "${module_cache}/go.goms.io/fleet@v0.14.0/config/crd/bases/cluster.kubernetes-fleet.io_memberclusters.yaml" \

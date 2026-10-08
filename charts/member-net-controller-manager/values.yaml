@@ -30,6 +30,7 @@ logVerbosity: 2
 
 refreshtoken:
   repository: ghcr.io/azure/fleet/refresh-token
+  digest: ""
   pullPolicy: Always
   tag: v0.1.0
 

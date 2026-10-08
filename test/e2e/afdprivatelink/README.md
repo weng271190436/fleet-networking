@@ -163,7 +163,9 @@ Setup does the following automatically:
    the approved built-in role assignments at exact disposable RG scopes;
 5. writes an explicit kubeconfig with run-specific hub/member contexts;
 6. applies Fleet `v0.14.0`, Gateway API `v1.2.1`, and repository networking CRDs;
-7. prepares validation-scoped member registration and scoped hub access;
+7. installs the existing getting-started hub registration chart, uses Azure-principal
+   RoleBindings and the member chart's refresh-token sidecar, then creates `InternalMemberCluster`
+   join requests and waits for networking-agent heartbeats;
 8. creates the WAF policy/rule, renders the actual WAF ID into Gateway resources;
 9. renders the new hub Gateway chart and existing member chart, appends digest-pinned echo
    Deployments/annotated Services, and applies all three manifests; and
@@ -181,7 +183,6 @@ Generated files are mode-protected and run-scoped:
 
 The state inventory records ACR/image digests, identities, federated credentials, role assignments,
 AKS-created assignments, resource IDs, and RGs. It contains no bearer tokens.
-The scoped 24-hour hub tokens are held in memory and written directly to member Secrets.
 
 If setup fails, it writes `.phase7-${AFD_PLS_E2E_RUN_ID}.results.setup-failure.log` before bounded
 cleanup. Review that file before retrying.
@@ -190,10 +191,13 @@ cleanup. Review that file before retrying.
 
 This repository ships networking controllers, not Fleet's production hub/member registration
 agents or their deployment chart (`cmd/` and `charts/` contain only networking managers).
-Therefore setup cannot test the production Fleet join controller. It explicitly creates each
-`MemberCluster`, `fleet-member-<name>` namespace, namespace-scoped service account,
-Role/RoleBinding, bound token, and `Joined=True` condition needed by the networking controllers.
-This is a validation-scoped substitute, not a claim that production Fleet registration was tested.
+Therefore setup cannot test the production core Fleet `MemberCluster` controller. It does reuse the
+repository's existing E2E registration path: reserved namespaces and Azure-principal RoleBindings
+from `examples/getting-started/charts/hub`, Azure refresh-token authentication from the member
+chart, and `InternalMemberCluster` join requests observed by the real networking agents. Setup
+waits for `ServiceExportImportAgent/Joined=True` and a heartbeat before setting the aggregate
+selector-facing `MemberCluster/Joined=True` condition. Only that aggregate condition remains a
+validation-scoped substitute.
 
 ## 7. Perform the human-run POC validation
 
@@ -520,14 +524,15 @@ az resource list --resource-group "$AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP" -o 
 tail -n 20 "$AFD_PLS_E2E_RESULTS_FILE" | jq .
 ```
 
-Do not print `Secret/hub-token`, use `kubectl get secret ... -o yaml`, or enable shell tracing.
+Do not print controller token volumes, use `kubectl get secret ... -o yaml`, or enable shell
+tracing.
 
 ## 9. Safe reruns and failure recovery
 
 Setup and apply operations are idempotent for the same run ID. A rerun accepts only existing RG,
 ACR, identity, and role-assignment resources that match the run's tags/state and exact scopes. It
-rebuilds the same tags, resolves current immutable digests, refreshes the bound tokens, rerenders
-manifests, and reapplies them.
+rebuilds the same tags, resolves current immutable digests, refreshes Azure-principal registration,
+rerenders manifests, and reapplies them.
 
 To retry after diagnosing a transient failure:
 

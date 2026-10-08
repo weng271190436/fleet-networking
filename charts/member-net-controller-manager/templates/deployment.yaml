@@ -98,7 +98,7 @@ spec:
           {{- end }}
         {{- if not .Values.config.staticTokenSecret }}
         - name: refresh-token
-          image: "{{ .Values.refreshtoken.repository }}:{{ .Values.refreshtoken.tag }}"
+          image: "{{ .Values.refreshtoken.repository }}{{ if .Values.refreshtoken.digest }}@{{ .Values.refreshtoken.digest }}{{ else }}:{{ .Values.refreshtoken.tag }}{{ end }}"
           imagePullPolicy: {{ .Values.refreshtoken.pullPolicy }}
           args:
             {{ $provider := .Values.config.provider }}

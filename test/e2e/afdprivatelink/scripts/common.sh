@@ -61,6 +61,7 @@ initialize_names() {
         export AFD_PLS_E2E_MEMBER_IMAGE="$(jq -r '.images.member // empty' "${AFD_PLS_E2E_STATE_FILE}")"
         export AFD_PLS_E2E_CRD_INSTALLER_IMAGE="$(jq -r '.images.crdInstaller // empty' "${AFD_PLS_E2E_STATE_FILE}")"
         export AFD_PLS_E2E_ECHO_IMAGE="$(jq -r '.images.echo // empty' "${AFD_PLS_E2E_STATE_FILE}")"
+        export AFD_PLS_E2E_REFRESH_TOKEN_IMAGE="$(jq -r '.images.refreshToken // empty' "${AFD_PLS_E2E_STATE_FILE}")"
     fi
 }
 

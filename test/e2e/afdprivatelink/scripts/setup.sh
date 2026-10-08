@@ -116,10 +116,19 @@ export AFD_PLS_E2E_HUB_IMAGE="$(resolve_image hub-gateway-controller-manager)"
 export AFD_PLS_E2E_MEMBER_IMAGE="$(resolve_image member-net-controller-manager)"
 export AFD_PLS_E2E_CRD_INSTALLER_IMAGE="$(resolve_image net-crd-installer)"
 export AFD_PLS_E2E_ECHO_IMAGE="$(resolve_image afd-pls-echo)"
+refresh_token_repository="ghcr.io/azure/fleet/refresh-token"
+refresh_token_digest="$(docker buildx imagetools inspect "${refresh_token_repository}:v0.1.0" \
+    --format '{{json .Manifest.Digest}}' | tr -d '"')"
+[[ "${refresh_token_digest}" =~ ^sha256:[[:xdigit:]]{64}$ ]] || {
+    echo "error: refresh-token image returned invalid digest" >&2
+    exit 1
+}
+export AFD_PLS_E2E_REFRESH_TOKEN_IMAGE="${refresh_token_repository}@${refresh_token_digest}"
 state_next="${AFD_PLS_E2E_STATE_FILE}.next"
 jq --arg hub "${AFD_PLS_E2E_HUB_IMAGE}" --arg member "${AFD_PLS_E2E_MEMBER_IMAGE}" \
     --arg crd "${AFD_PLS_E2E_CRD_INSTALLER_IMAGE}" --arg echo "${AFD_PLS_E2E_ECHO_IMAGE}" \
-    '.images = {hubGateway: $hub, member: $member, crdInstaller: $crd, echo: $echo}' \
+    --arg refreshToken "${AFD_PLS_E2E_REFRESH_TOKEN_IMAGE}" \
+    '.images = {hubGateway: $hub, member: $member, crdInstaller: $crd, echo: $echo, refreshToken: $refreshToken}' \
     "${AFD_PLS_E2E_STATE_FILE}" >"${state_next}"
 mv "${state_next}" "${AFD_PLS_E2E_STATE_FILE}"
 
@@ -285,50 +294,34 @@ waf_id="$(az network front-door waf-policy show --resource-group "${AFD_PLS_E2E_
     --name "${AFD_PLS_E2E_WAF_POLICY}" --query id -o tsv)"
 record_resource wafPolicy "${AFD_PLS_E2E_WAF_POLICY}" "${waf_id}"
 
-bootstrap_member() {
-    local member_name="$1" member_context="$2"
-    local namespace="fleet-member-${member_name}"
-    local token
-    k "${AFD_PLS_E2E_HUB_CONTEXT}" create namespace "${namespace}" --dry-run=client -o yaml |
-        k "${AFD_PLS_E2E_HUB_CONTEXT}" apply -f -
-    k "${AFD_PLS_E2E_HUB_CONTEXT}" -n "${namespace}" create serviceaccount member-agent \
-        --dry-run=client -o yaml | k "${AFD_PLS_E2E_HUB_CONTEXT}" apply -f -
+registration_manifest="${AFD_PLS_E2E_ARTIFACT_DIR}/hub-member-registration.yaml"
+HELM_NO_PLUGINS=1 helm template phase7-registration "${REPO_ROOT}/examples/getting-started/charts/hub" \
+    --namespace fleet-system --set-string userNS=afd-pls-e2e \
+    --set-string memberClusterConfigs[0].memberID="${AFD_PLS_E2E_MEMBER1_CLUSTER}" \
+    --set-string memberClusterConfigs[0].principalID="${member_1_principal_id}" \
+    --set-string memberClusterConfigs[1].memberID="${AFD_PLS_E2E_MEMBER2_CLUSTER}" \
+    --set-string memberClusterConfigs[1].principalID="${member_2_principal_id}" \
+    >"${registration_manifest}"
+k "${AFD_PLS_E2E_HUB_CONTEXT}" apply --server-side --field-manager=phase7-e2e \
+    -f "${registration_manifest}"
+
+create_member_cluster() {
+    local member_name="$1" principal_id="$2"
     cat <<EOF | k "${AFD_PLS_E2E_HUB_CONTEXT}" apply -f -
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: {name: member-agent, namespace: ${namespace}}
-rules:
-- apiGroups: ["networking.fleet.azure.com"]
-  resources: ["*"]
-  verbs: ["get","list","watch","create","update","patch","delete"]
-- apiGroups: [""]
-  resources: ["events"]
-  verbs: ["create","patch","update"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: {name: member-agent, namespace: ${namespace}}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: member-agent}
-subjects:
-- {kind: ServiceAccount, name: member-agent, namespace: ${namespace}}
----
 apiVersion: cluster.kubernetes-fleet.io/v1beta1
 kind: MemberCluster
 metadata:
   name: ${member_name}
   labels: {networking.fleet.azure.com/afd-poc: "true"}
 spec:
-  identity: {kind: ServiceAccount, name: member-agent, namespace: ${namespace}}
+  identity:
+    apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: ${principal_id}
 EOF
-    k "${AFD_PLS_E2E_HUB_CONTEXT}" patch membercluster "${member_name}" --subresource=status \
-        --type=merge -p '{"status":{"conditions":[{"type":"Joined","status":"True","reason":"Phase7Harness","message":"Scoped E2E registration prepared by Phase 7 harness","lastTransitionTime":"2026-10-08T00:00:00Z"}]}}'
-    token="$(k "${AFD_PLS_E2E_HUB_CONTEXT}" -n "${namespace}" create token member-agent --duration=24h)"
-    k "${member_context}" -n fleet-system create secret generic hub-token \
-        --from-literal=token="${token}" --dry-run=client -o yaml | k "${member_context}" apply -f -
-    unset token
 }
-bootstrap_member "${AFD_PLS_E2E_MEMBER1_CLUSTER}" "${AFD_PLS_E2E_MEMBER1_CONTEXT}"
-bootstrap_member "${AFD_PLS_E2E_MEMBER2_CLUSTER}" "${AFD_PLS_E2E_MEMBER2_CONTEXT}"
+create_member_cluster "${AFD_PLS_E2E_MEMBER1_CLUSTER}" "${member_1_principal_id}"
+create_member_cluster "${AFD_PLS_E2E_MEMBER2_CLUSTER}" "${member_2_principal_id}"
 
 hub_server="$(k "${AFD_PLS_E2E_HUB_CONTEXT}" config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
 hub_ca="$(k "${AFD_PLS_E2E_HUB_CONTEXT}" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
@@ -338,6 +331,8 @@ member_repo="${AFD_PLS_E2E_MEMBER_IMAGE%@*}"
 member_digest="${AFD_PLS_E2E_MEMBER_IMAGE##*@}"
 crd_repo="${AFD_PLS_E2E_CRD_INSTALLER_IMAGE%@*}"
 crd_digest="${AFD_PLS_E2E_CRD_INSTALLER_IMAGE##*@}"
+refresh_token_repo="${AFD_PLS_E2E_REFRESH_TOKEN_IMAGE%@*}"
+refresh_token_digest="${AFD_PLS_E2E_REFRESH_TOKEN_IMAGE##*@}"
 
 HELM_NO_PLUGINS=1 helm template phase7 "${REPO_ROOT}/charts/hub-gateway-controller-manager" \
     --namespace fleet-system \
@@ -356,7 +351,9 @@ render_member() {
         --set crdInstaller.enabled=true --set-string crdInstaller.image.repository="${crd_repo}" \
         --set-string crdInstaller.image.digest="${crd_digest}" --set crdInstaller.isE2ETest=true \
         --set-string config.hubURL="${hub_server}" --set-string config.hubCA="${hub_ca}" \
-        --set-string config.memberClusterName="${member_name}" --set-string config.staticTokenSecret=hub-token \
+        --set-string config.memberClusterName="${member_name}" --set-string config.provider=azure \
+        --set-string refreshtoken.repository="${refresh_token_repo}" \
+        --set-string refreshtoken.digest="${refresh_token_digest}" \
         --set tlsClientInsecure=false \
         --set-string azure.clientid="${client_id}" --set azure.workloadIdentityEnabled=true \
         --set enableTrafficManagerFeature=false \
@@ -474,6 +471,40 @@ for context in "${AFD_PLS_E2E_MEMBER1_CONTEXT}" "${AFD_PLS_E2E_MEMBER2_CONTEXT}"
         deployment/member-net-controller-manager --timeout=20m
     k "${context}" -n afd-pls-e2e wait --for=condition=Available deployment/echo --timeout=20m
 done
+
+join_member() {
+    local member_name="$1"
+    local namespace="fleet-member-${member_name}"
+    cat <<EOF | k "${AFD_PLS_E2E_HUB_CONTEXT}" apply -f -
+apiVersion: cluster.kubernetes-fleet.io/v1beta1
+kind: InternalMemberCluster
+metadata:
+  name: ${member_name}
+  namespace: ${namespace}
+spec:
+  state: Join
+  heartbeatPeriodSeconds: 10
+EOF
+    for attempt in $(seq 1 60); do
+        if k "${AFD_PLS_E2E_HUB_CONTEXT}" -n "${namespace}" get internalmembercluster "${member_name}" \
+            -o json | jq -e '
+                any(.status.agentStatus[]?;
+                    .type == "ServiceExportImportAgent" and
+                    (.lastReceivedHeartbeat != null) and
+                    any(.conditions[]?; .type == "Joined" and .status == "True"))
+            ' >/dev/null; then
+            now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            k "${AFD_PLS_E2E_HUB_CONTEXT}" patch membercluster "${member_name}" --subresource=status \
+                --type=merge -p "{\"status\":{\"conditions\":[{\"type\":\"Joined\",\"status\":\"True\",\"reason\":\"NetworkingAgentJoined\",\"message\":\"Phase 7 networking agent joined through the existing E2E registration path\",\"lastTransitionTime\":\"${now}\"}]}}"
+            return
+        fi
+        sleep 10
+    done
+    echo "error: networking agent for ${member_name} did not join within 10 minutes" >&2
+    return 1
+}
+join_member "${AFD_PLS_E2E_MEMBER1_CLUSTER}"
+join_member "${AFD_PLS_E2E_MEMBER2_CLUSTER}"
 
 state_next="${AFD_PLS_E2E_STATE_FILE}.next"
 assignments="$(az role assignment list --all --query "[?contains(scope, '${AFD_PLS_E2E_RESOURCE_GROUP}')].{id:id,name:name,role:roleDefinitionName,principalId:principalId,scope:scope}" -o json)"

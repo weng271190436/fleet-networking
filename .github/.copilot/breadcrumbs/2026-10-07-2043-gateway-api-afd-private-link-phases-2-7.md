@@ -603,9 +603,11 @@ The approved preparation work is to make the harness self-contained without runn
   credentials, creates exact built-in role assignments, records AKS identities/role assignments, and
   renders/applies only digest-pinned manifests through explicit generated contexts.
 - Pinned Fleet registration CRDs to `v0.14.0` and Gateway API standard CRDs to `v1.2.1`, matching
-  `go.mod`. Because this repository does not contain Fleet registration agents/charts, setup
-  truthfully uses a validation-scoped substitute: explicit MemberClusters, reserved namespaces,
-  namespace-scoped service accounts/RBAC, 24-hour bound tokens, and Joined conditions.
+  `go.mod`. Setup reuses the repository's existing E2E registration path: Azure-principal
+  RoleBindings from `examples/getting-started/charts/hub`, the member chart's refresh-token
+  sidecar, and real `InternalMemberCluster` networking-agent join/heartbeat. Only the aggregate
+  selector-facing `MemberCluster/Joined=True` status is validation-scoped because the core Fleet
+  MemberCluster controller is not shipped here.
 - Added a standalone operator runbook covering tools/login, exact subscription selection,
   preflight, billable resources, the explicit mutation acknowledgement, setup/render behavior,
   tagged execution, evidence, monitoring, reruns, recovery, bounded cleanup, deletion
@@ -664,6 +666,13 @@ The approved preparation work is to make the harness self-contained without runn
 - At the user's request, setup failures now preserve the partially provisioned environment for
   manual diagnosis and continuation. Diagnostics still run automatically, but cleanup requires an
   explicit `make phase7-e2e-cleanup`; billable resources remain until the operator runs it.
+- After reviewing the repository's existing E2E bootstrap, Phase 7 registration will reuse
+  `examples/getting-started/charts/hub` to create reserved namespaces and Azure-principal
+  RoleBindings, and the member chart's Azure refresh-token sidecar for hub authentication.
+- Setup will create `InternalMemberCluster` join requests and wait for the real networking agent
+  `Joined=True` status/heartbeat before marking the selector-facing `MemberCluster` joined. Only
+  that aggregate `MemberCluster` status remains synthetic because this repository does not ship
+  Fleet's core MemberCluster controller.
 
 ## Before/After Comparison
 

@@ -114,6 +114,7 @@ helm upgrade member-net-controller-manager ./charts/member-net-controller-manage
 | config.memberClusterName | Unique identifier of the member cluster  | `""` |
 | config.hubCA | Trusted root certificates for insecure requests to hub cluster| `""` |
 | config.staticTokenSecret | Optional Secret with a `token` key; disables the refresh-token sidecar when set | `""` |
+| refreshtoken.digest | Optional immutable refresh-token image digest; takes precedence over `refreshtoken.tag` | `""` |
 | podAnnotations | Pod Annotations | `{}` |
 | affinity | The node affinity to use for pod scheduling | `{}` |
 | tolerations | The toleration to use for pod scheduling | `[]` |
