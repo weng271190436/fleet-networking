@@ -67,12 +67,15 @@ type Backend struct {
 	// follows the Gateway API HTTPBackendRef range [0, 1,000,000].
 	RouteWeight     int32
 	HealthProbePath string
+	OriginGroupName string
 	Origins         []Origin
 }
 
 // Origin represents one member-cluster endpoint behind a ServiceImport.
 type Origin struct {
-	Cluster  string
+	Cluster string
+	Name    string
+	// Endpoint is the private ILB address discovered by the member controller.
 	Endpoint string
 	// Weight splits traffic between member clusters behind one ServiceImport
 	// and follows the existing Fleet ServiceExport range [0, 1000].
@@ -80,6 +83,7 @@ type Origin struct {
 	Connectivity          string
 	PrivateLinkResourceID string
 	PrivateLinkLocation   string
+	RequestMessage        string
 }
 
 // Normalize validates a model and returns a deeply copied, deterministically
@@ -198,6 +202,10 @@ func validate(model GlobalGateway) error {
 				origins[origin.Cluster] = struct{}{}
 				if origin.Weight < 0 || origin.Weight > maxServiceExportWeight {
 					return fmt.Errorf("backend %q origin %q weight %d is outside [0, %d]", backendKey, origin.Cluster, origin.Weight, maxServiceExportWeight)
+				}
+				if origin.Connectivity == "PrivateLink" &&
+					(origin.PrivateLinkResourceID == "" || origin.PrivateLinkLocation == "" || origin.RequestMessage == "") {
+					return fmt.Errorf("backend %q origin %q requires complete Private Link configuration", backendKey, origin.Cluster)
 				}
 			}
 		}

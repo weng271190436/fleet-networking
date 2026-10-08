@@ -24,6 +24,7 @@ import (
 	"go.goms.io/fleet/pkg/utils/cloudconfig/azure"
 
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
+	"go.goms.io/fleet-networking/pkg/providers/azure/frontdoor"
 )
 
 func TestNewScheme_RegistersGatewayAndFleetTypes(t *testing.T) {
@@ -113,7 +114,7 @@ func TestProductionDependencies_AreConfigured(t *testing.T) {
 	got := productionDependencies()
 
 	if got.getConfig == nil || got.newManager == nil || got.signalHandler == nil ||
-		got.loadAFDConfig == nil || got.newScheme == nil || got.setupControllers == nil {
+		got.loadAFDConfig == nil || got.newAFDProvider == nil || got.newScheme == nil || got.setupControllers == nil {
 		t.Errorf("productionDependencies() = %#v, want all dependencies configured", got)
 	}
 
@@ -130,6 +131,7 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 		options              managerOptions
 		schemeError          error
 		loadConfigError      error
+		providerError        error
 		newManagerError      error
 		setupError           error
 		healthError          error
@@ -137,6 +139,7 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 		startError           error
 		wantError            string
 		wantConfigLoads      int
+		wantProviderBuilds   int
 		wantControllerSetups int
 		wantManagerStarts    int
 	}{
@@ -163,6 +166,7 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 				afdResourceGroup: "afd-rg",
 			},
 			wantConfigLoads:      1,
+			wantProviderBuilds:   1,
 			wantControllerSetups: 1,
 			wantManagerStarts:    1,
 		},
@@ -176,7 +180,20 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 			setupError:           errors.New("setup failed"),
 			wantError:            "set up hub Gateway controllers",
 			wantConfigLoads:      1,
+			wantProviderBuilds:   1,
 			wantControllerSetups: 1,
+		},
+		{
+			name: "provider factory failure stops startup",
+			options: managerOptions{
+				enableAFD:        true,
+				cloudConfigFile:  "provider.json",
+				afdResourceGroup: "afd-rg",
+			},
+			providerError:      errors.New("provider failed"),
+			wantError:          "create Azure Front Door provider",
+			wantConfigLoads:    1,
+			wantProviderBuilds: 1,
 		},
 		{
 			name: "configuration failure stops startup",
@@ -218,6 +235,7 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 				startError:  tt.startError,
 			}
 			configLoads := 0
+			providerBuilds := 0
 			controllerSetups := 0
 			var receivedOptions ctrl.Options
 			deps := dependencies{
@@ -240,6 +258,13 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 						return nil, tt.loadConfigError
 					}
 					return &azure.CloudConfig{SubscriptionID: "00000000-0000-0000-0000-000000000000"}, nil
+				},
+				newAFDProvider: func(_ *azure.CloudConfig, _ string) (*frontdoor.Provider, error) {
+					providerBuilds++
+					if tt.providerError != nil {
+						return nil, tt.providerError
+					}
+					return &frontdoor.Provider{}, nil
 				},
 				newScheme: func() (*runtime.Scheme, error) {
 					if tt.schemeError != nil {
@@ -274,10 +299,13 @@ func TestRun_ManagesStartupLifecycle(t *testing.T) {
 			if controllerSetups != tt.wantControllerSetups {
 				t.Errorf("controller setups = %d, want %d", controllerSetups, tt.wantControllerSetups)
 			}
+			if providerBuilds != tt.wantProviderBuilds {
+				t.Errorf("AFD provider builds = %d, want %d", providerBuilds, tt.wantProviderBuilds)
+			}
 			if manager.starts != tt.wantManagerStarts {
 				t.Errorf("manager starts = %d, want %d", manager.starts, tt.wantManagerStarts)
 			}
-			if tt.schemeError == nil && tt.newManagerError == nil && tt.loadConfigError == nil {
+			if tt.schemeError == nil && tt.newManagerError == nil && tt.loadConfigError == nil && tt.providerError == nil {
 				if receivedOptions.Scheme == nil {
 					t.Error("manager options Scheme = nil, want registered scheme")
 				}

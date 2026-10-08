@@ -140,29 +140,117 @@ not create infrastructure, program AFD, or approve Private Link connections.
 
 ### Phase 3: Implement POC Phase 4 - AFD Premium provider
 
-- [ ] **Task 3.1: Write provider contract and reconciliation tests first.**
+- [x] **Task 3.1: Write provider contract and reconciliation tests first.**
   - Cover stable names/order, create/update/no-op/delete, provisioning-state observation, ownership
     collisions, partial failures, Private Link enforcement, and read-only WAF behavior.
   - Success criteria: all Azure SDK operations are exercised through fakes.
-- [ ] **Task 3.2: Extend the normalized model.**
+- [x] **Task 3.2: Extend the normalized model.**
   - Resolve ready assignment status into private origins grouped by `MultiClusterBackend`.
   - Preserve deterministic ordering and the assignment approval request message.
   - Success criteria: two ready assignments produce two stable private origins.
-- [ ] **Task 3.3: Implement narrow Azure SDK adapters.**
+- [x] **Task 3.3: Implement narrow Azure SDK adapters.**
   - Add `armcdn/v3` v3.0.0 and `armfrontdoor/v2` v2.0.0, update dependencies, and run `go mod
     tidy`.
   - Expose only required AFD operations and WAF `Get`.
   - Success criteria: credentials are not logged and contexts/errors are bounded and classified.
-- [ ] **Task 3.4: Reconcile the AFD resource graph.**
+- [x] **Task 3.4: Reconcile the AFD resource graph.**
   - Implement profile, endpoint, origin group, private origins, routes, and WAF security policy with
     deterministic names and complete ownership tags.
   - Success criteria: unchanged input is a no-op, foreign resources are rejected, and external WAF
     deletion is impossible through the interface.
-- [ ] **Task 3.5: Validate, document, commit, and push Phase 4.**
+- [x] **Task 3.5: Validate, document, commit, and push Phase 4.**
   - Run focused tests, vet/lint, dependency tidy, generation, and diff checks.
   - Commit as `feat: add AFD Premium provider` and push.
   - Success criteria: Phase 4 exit criteria pass against fakes and the remote contains the isolated
     provider commit.
+
+#### Phase 4 execution plan
+
+1. **Tests first**
+   - Extend the normalized model tests for two ready assignments, deterministic private-origin
+     ordering and names, exact approval request messages, required Private Link, health probes, WAF,
+     and deep-copy behavior.
+   - Add fake-backed provider tests for create, update, no-op, delete, provisioning observation,
+     foreign ownership, partial retryable failures, and preservation of the external WAF policy.
+   - Add adapter and manager-factory tests that compile against the pinned SDK types without Azure
+     credentials or network calls.
+2. **Normalized backend model**
+   - Add `MultiClusterBackend`-derived origin groups and assignment-derived private origins without
+     changing existing ServiceImport foundation behavior.
+   - Preserve stable ordering, deterministic resource names, and the exact
+     `fleet:<assignment-uid>:<request-token>` request message.
+3. **AFD provider and Azure adapters**
+   - Add the frozen `armcdn/v3` v3.0.0 and `armfrontdoor/v2` v2.0.0 dependencies.
+   - Define narrow CRUD interfaces for the controller-owned AFD graph and a read-only WAF `Get`
+     interface, then implement concrete SDK adapters using caller-provided contexts and actionable
+     wrapped errors.
+   - Reconcile a Premium profile, endpoint, origin groups, private origins, routes, and WAF
+     security-policy association with deterministic names and complete ownership tags.
+4. **Production construction only**
+   - Build the Phase 4 provider from the existing gated hub Gateway manager configuration.
+   - Do not add GatewayClass, Gateway, or HTTPRoute reconcilers, status writers, finalizers, or
+     Phase 5 approval behavior.
+5. **Validation and delivery**
+   - Run goimports, `go mod tidy`, focused race tests, focused vet/lint, applicable generation
+     idempotence checks, and `git diff --check`.
+   - Mark only Phase 4 complete, record prior Phase 2 commit `bc5702b` and Phase 3 commit
+     `5b5b997`, then create and push the single required Phase 4 commit.
+
+#### Phase 4 frozen-contract blocker
+
+- The pinned `armcdn/v3` v3.0.0 SDK can represent and create the requested AFD Premium profile,
+  endpoint, origin groups, private origins, routes, and security policy.
+- `armcdn.Profile` and `armcdn.AFDEndpoint` expose `Tags`, but `armcdn.AFDOriginGroup`,
+  `armcdn.AFDOrigin`, `armcdn.Route`, and `armcdn.SecurityPolicy` do not expose tags in API
+  `2025-06-01`.
+- The frozen POC contract requires every owned Azure resource to carry hub identity, Gateway
+  namespace/name/UID, and controller identifier tags, and requires rejecting any existing resource
+  without matching tags.
+- Consequently, the pinned SDK/API cannot implement the frozen ownership contract for four owned
+  child resource kinds. Per the user-provided stop condition, Phase 4 stopped without a commit or
+  push. The partial tests and implementation remain uncommitted for evidence and must not be
+  treated as Phase 4 completion.
+
+#### Phase 4 ownership resolution
+
+- The user approved limiting ownership tags to tag-capable resources.
+- The provider verifies the full ownership-tag set on the AFD profile and endpoint.
+- Origin groups, origins, routes, and security policies inherit the verified parent ownership and
+  are addressed only by their exact Azure parent hierarchy plus deterministic controller-generated
+  names.
+- The provider does not list, partially match, adopt, mutate, or delete unrelated child resources.
+- This is the frozen Phase 4 ownership rule for the pinned `2025-06-01` AFD API.
+
+#### Phase 4 implementation
+
+- Added assignment-derived, deterministically sorted private origins and origin groups to the
+  normalized model, including exact `fleet:<assignment-uid>:<request-token>` messages.
+- Added deterministic AFD-safe naming with sanitization, hash suffixes, and a conservative
+  50-character limit.
+- Added narrow provider interfaces for profiles, endpoints, origin groups, origins, routes,
+  security policies, and read-only WAF lookup.
+- Added concrete `armcdn/v3` v3.0.0 and `armfrontdoor/v2` v2.0.0 adapters.
+- Reconciled Premium profile, endpoint, private origin groups/origins, routes, and WAF security
+  policy through create/update/no-op observation.
+- Observed Azure provisioning state before reporting the provider result ready.
+- Rejected foreign tagged profiles/endpoints and left unrelated deterministic-name-mismatched child
+  resources untouched.
+- Deleted only the verified owned profile, relying on Azure parent deletion for child cleanup; the
+  provider interface exposes no WAF mutation or deletion operation.
+- Added a production provider factory to the AFD-gated hub Gateway manager without adding Phase 6
+  Gateway reconcilers.
+
+#### Phase 4 validation
+
+- Focused race-enabled tests passed for `gatewaymodel`, the AFD provider, and the hub Gateway
+  manager.
+- Adjacent Phase 2 and Phase 3 controller tests passed during implementation.
+- `go vet ./...` passed.
+- `golint` passed for both new Phase 4 packages.
+- `go mod tidy` is idempotent with the pinned direct SDK dependencies.
+- Repository formatting and `git diff --check` passed.
+- The initial every-child-tag contract blocker was resolved explicitly by the user; no workaround
+  or unsupported SDK field was introduced.
 
 ### Phase 4: Implement POC Phase 5 - automated PLS approval
 
@@ -244,11 +332,11 @@ not create infrastructure, program AFD, or approve Private Link connections.
 - [ ] Phase 2 / Task 2.2 completed.
 - [ ] Phase 2 / Task 2.3 completed.
 - [ ] Phase 2 / Task 2.4 completed.
-- [ ] Phase 3 / Task 3.1 completed.
-- [ ] Phase 3 / Task 3.2 completed.
-- [ ] Phase 3 / Task 3.3 completed.
-- [ ] Phase 3 / Task 3.4 completed.
-- [ ] Phase 3 / Task 3.5 completed.
+- [x] Phase 3 / Task 3.1 completed.
+- [x] Phase 3 / Task 3.2 completed.
+- [x] Phase 3 / Task 3.3 completed.
+- [x] Phase 3 / Task 3.4 completed.
+- [x] Phase 3 / Task 3.5 completed.
 - [ ] Phase 4 / Task 4.1 completed.
 - [ ] Phase 4 / Task 4.2 completed.
 - [ ] Phase 4 / Task 4.3 completed.
@@ -326,6 +414,7 @@ The user approved the delivery plan.
 - Verified the local branch and fork both point to the Phase 1 commit.
 - Confirmed Azure CLI authentication, a Kubernetes context, kubectl, and Helm are available.
 - Implemented and validated POC Phase 2.
+- Implemented and validated POC Phase 4 after the approved ownership-contract correction.
 - Implemented and validated POC Phase 3 member origin discovery.
 
 ## Before/After Comparison
@@ -336,8 +425,8 @@ The user approved the delivery plan.
 
 ### After
 
-- Phase 3 is complete. A selected member now publishes ready ILB and PLS origin facts through
-  assignment status. Phase 4 can consume these facts to implement the AFD Premium provider.
+- Phase 4 is complete. The provider can reconcile and observe the deterministic AFD Premium
+  resource graph from normalized private origins. Phase 5 can add narrow PLS approval.
 
 ## References
 

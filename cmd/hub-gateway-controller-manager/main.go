@@ -27,6 +27,8 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/policy/ratelimit"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -39,6 +41,7 @@ import (
 
 	fleetnetv1alpha1 "go.goms.io/fleet-networking/api/v1alpha1"
 	"go.goms.io/fleet-networking/pkg/controllers/hub/multiclusterbackend"
+	"go.goms.io/fleet-networking/pkg/providers/azure/frontdoor"
 )
 
 var (
@@ -104,6 +107,7 @@ type dependencies struct {
 	newManager       func(*rest.Config, ctrl.Options) (controllerManager, error)
 	signalHandler    func() context.Context
 	loadAFDConfig    func(string, string) (*azure.CloudConfig, error)
+	newAFDProvider   func(*azure.CloudConfig, string) (*frontdoor.Provider, error)
 	newScheme        func() (*runtime.Scheme, error)
 	setupControllers func(controllerManager) error
 }
@@ -114,9 +118,10 @@ func productionDependencies() dependencies {
 		newManager: func(config *rest.Config, options ctrl.Options) (controllerManager, error) {
 			return ctrl.NewManager(config, options)
 		},
-		signalHandler: ctrl.SetupSignalHandler,
-		loadAFDConfig: loadAFDConfiguration,
-		newScheme:     newScheme,
+		signalHandler:  ctrl.SetupSignalHandler,
+		loadAFDConfig:  loadAFDConfiguration,
+		newAFDProvider: initAFDProvider,
+		newScheme:      newScheme,
 		setupControllers: func(manager controllerManager) error {
 			mgr, ok := manager.(ctrl.Manager)
 			if !ok {
@@ -134,10 +139,14 @@ func run(options managerOptions, deps dependencies) error {
 	}
 
 	if options.enableAFD {
-		if _, err := deps.loadAFDConfig(options.cloudConfigFile, options.afdResourceGroup); err != nil {
+		cloudConfig, err := deps.loadAFDConfig(options.cloudConfigFile, options.afdResourceGroup)
+		if err != nil {
 			return fmt.Errorf("load Azure Front Door configuration: %w", err)
 		}
-		klog.InfoS("Azure Front Door configuration is valid")
+		if _, err := deps.newAFDProvider(cloudConfig, options.afdResourceGroup); err != nil {
+			return fmt.Errorf("create Azure Front Door provider: %w", err)
+		}
+		klog.InfoS("Azure Front Door provider is configured", "resourceGroup", options.afdResourceGroup)
 	} else {
 		klog.InfoS("Azure Front Door reconciliation is disabled")
 	}
@@ -206,4 +215,28 @@ func loadAFDConfiguration(cloudConfigPath, resourceGroup string) (*azure.CloudCo
 	}
 	cloudConfig.SetUserAgent("fleet-hub-gateway-controller-manager")
 	return cloudConfig, nil
+}
+
+// initAFDProvider constructs the Phase 4 production provider. Gateway reconciliation is added in Phase 6.
+func initAFDProvider(cloudConfig *azure.CloudConfig, resourceGroup string) (*frontdoor.Provider, error) {
+	authProvider, err := azclient.NewAuthProvider(&cloudConfig.ARMClientConfig, &cloudConfig.AzureAuthConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Azure auth provider: %w", err)
+	}
+	factoryConfig := &azclient.ClientFactoryConfig{
+		CloudProviderBackoff: true,
+		SubscriptionID:       cloudConfig.SubscriptionID,
+	}
+	options, err := azclient.GetDefaultResourceClientOption(&cloudConfig.ARMClientConfig, factoryConfig)
+	if err != nil {
+		return nil, fmt.Errorf("get Azure resource client options: %w", err)
+	}
+	if rateLimitPolicy := ratelimit.NewRateLimitPolicy(cloudConfig.Config); rateLimitPolicy != nil {
+		options.ClientOptions.PerCallPolicies = append(options.ClientOptions.PerCallPolicies, rateLimitPolicy)
+	}
+	clients, err := frontdoor.NewAzureClients(cloudConfig.SubscriptionID, authProvider.GetAzIdentity(), options)
+	if err != nil {
+		return nil, err
+	}
+	return frontdoor.NewProvider(cloudConfig.SubscriptionID, resourceGroup, clients), nil
 }

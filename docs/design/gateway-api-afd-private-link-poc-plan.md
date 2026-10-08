@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 3 complete; ready for Phase 4
+- **Status:** Phase 4 complete; ready for Phase 5
 - **Date:** 2026-10-07
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -452,14 +452,20 @@ Initial mapping:
 | `ServiceOriginAssignment` | Origin with shared Private Link configuration |
 | Backend health probe | Origin-group health probe |
 
-Every owned Azure resource must include ownership tags for:
+Every tag-capable owned Azure resource must include ownership tags for:
 
 - hub identity;
 - Gateway namespace and name;
 - Gateway UID; and
 - controller identifier.
 
-The provider must reject an existing resource that does not have matching ownership tags.
+The AFD profile and endpoint support Azure tags and must carry the complete ownership-tag set.
+The pinned AFD API does not expose tags on origin groups, origins, routes, or security policies.
+Ownership of those child resources is therefore derived only after the provider verifies the
+tagged parent profile, then addresses each child through the expected parent resource hierarchy and
+a deterministic name derived from the Gateway or backend identity. The provider must reject a
+profile or endpoint with mismatched ownership tags and must never discover or adopt arbitrary
+children by list position, display name, or partial-name matching.
 
 ## Private Link approval protocol
 
@@ -690,14 +696,14 @@ trust policy in hub-owned assignment spec.
 
 ### Phase 4: Implement the AFD Premium provider
 
-- [ ] Define narrow Azure SDK interfaces.
-- [ ] Update the normalized model for `MultiClusterBackend`.
-- [ ] Reconcile profile, endpoint, origin groups, origins, and routes.
-- [ ] Require Private Link on every origin.
-- [ ] Attach the pre-created WAF policy through a security policy.
-- [ ] Add deterministic names and ownership tags.
-- [ ] Observe Azure provisioning state.
-- [ ] Implement idempotent update and deletion.
+- [x] Define narrow Azure SDK interfaces.
+- [x] Update the normalized model for `MultiClusterBackend`.
+- [x] Reconcile profile, endpoint, origin groups, origins, and routes.
+- [x] Require Private Link on every origin.
+- [x] Attach the pre-created WAF policy through a security policy.
+- [x] Add deterministic names and ownership tags.
+- [x] Observe Azure provisioning state.
+- [x] Implement idempotent update and deletion.
 
 **Exit criteria**
 
