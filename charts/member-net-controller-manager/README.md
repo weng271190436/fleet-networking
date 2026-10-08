@@ -98,6 +98,7 @@ helm upgrade member-net-controller-manager ./charts/member-net-controller-manage
 |:-|:-|:-|
 | replicaCount | The number of member-net-controller-manager replicas to deploy | `1` |
 | image.repository | Image repository | `ghcr.io/azure/fleet-networking/member-net-controller-manager` |
+| image.digest | Optional immutable digest; when set, takes precedence over `image.tag` | `""` |
 | image.pullPolicy | Image pullPolicy | `IfNotPresent` |
 | image.tag | The image tag to use | `v0.1.0` |
 | logVerbosity | Log level. Uses V logs (klog) | `2` |
@@ -105,12 +106,14 @@ helm upgrade member-net-controller-manager ./charts/member-net-controller-manage
 | leaderElectionNamespace | The namespace in which the leader election resource will be created. | `fleet-system` |
 | resources | The resource request/limits for the container image | limits: 500m CPU, 1Gi, requests: 100m CPU, 128Mi |
 | azure.clientid | Azure AAD client ID to obtain token to request hub cluster, required when config.provider is `azure` | `[]` |
+| azure.workloadIdentityEnabled | Annotate the service account and label pods for AKS workload identity | `false` |
 | secret.name | The name of Kuberentes Secret storing credential to hub cluster, required when config.provider is `secret` | `[]` |
 | secret.namespace | The namespace of Kuberentes Secret storing credential to hub cluster, required when config.provider is `secret` | `[]` |
 | config.provider | Auth token provider to request hub cluster, can be either `azure` or `secret` | `secret` |
 | config.hubURL | Hub cluster endpoint in format `https://<hub_cluster_api_server_ip>:<hub_cluster_port` | `""` |
 | config.memberClusterName | Unique identifier of the member cluster  | `""` |
 | config.hubCA | Trusted root certificates for insecure requests to hub cluster| `""` |
+| config.staticTokenSecret | Optional Secret with a `token` key; disables the refresh-token sidecar when set | `""` |
 | podAnnotations | Pod Annotations | `{}` |
 | affinity | The node affinity to use for pod scheduling | `{}` |
 | tolerations | The toleration to use for pod scheduling | `[]` |

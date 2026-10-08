@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 6 complete; ready for Phase 7
+- **Status:** Phase 7 runbook in progress; live validation incomplete
 - **Date:** 2026-10-08
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -123,7 +123,7 @@ implementation-specific `MultiClusterBackend`.
     +---------------------------+               +---------------------------+
 ```
 
-The minimum E2E environment contains one hub, two AKS members, one logical backend, one Gateway,
+The minimum real-Azure validation environment contains one hub, two AKS members, one logical backend, one Gateway,
 one HTTPRoute, one AFD Premium profile, one pre-created WAF policy, and two private origins.
 
 ## API design
@@ -753,7 +753,7 @@ trust policy in hub-owned assignment spec.
 - Deletion removes only hub-owned AFD resources.
 - Existing AFD traffic continues while the hub controller is stopped.
 
-### Phase 7: Build the real Azure E2E test
+### Phase 7: Run the real Azure human validation
 
 - [ ] Provision one hub and two AKS members.
 - [ ] Label both MemberClusters for selection.
@@ -774,7 +774,8 @@ trust policy in hub-owned assignment spec.
 **Exit criteria**
 
 - Every required data-plane and lifecycle assertion passes from a clean environment.
-- Test output records Azure resource IDs, Kubernetes conditions, and HTTP results.
+- Human-witnessed commands and shell evidence snapshots record Azure resource IDs, Kubernetes
+  conditions, and HTTP results.
 - Cleanup is idempotent and leaves no controller-owned Azure resources.
 
 ## Minimal unit-test plan
@@ -788,10 +789,11 @@ Keep unit coverage deliberately narrow for the POC:
    observed ready.
 5. The member approval matcher accepts the expected token and rejects a mismatched token.
 
-Use the real Azure E2E test as the primary validation, but keep Azure SDK calls behind interfaces so
-the controller's happy path can be tested without Azure.
+Use the guarded real-Azure operator checklist as the primary POC validation. Phase 7 intentionally
+has no Go/Ginkgo runner; keep Azure SDK calls behind interfaces so controller behavior remains
+unit-testable without Azure.
 
-## E2E WAF assertion
+## Real-Azure WAF assertion
 
 Configure the pre-created WAF policy with a deterministic custom rule, for example:
 
@@ -799,7 +801,7 @@ Configure the pre-created WAF policy with a deterministic custom rule, for examp
 If request header X-POC-Block equals true, block the request.
 ```
 
-The E2E test must prove both paths:
+The human-run validation must prove and record both paths:
 
 ```text
 GET /                         -> application response

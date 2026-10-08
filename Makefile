@@ -5,14 +5,18 @@ ifndef TAG
 	TAG ?= $(shell git rev-parse --short=7 HEAD)
 endif
 HUB_NET_CONTROLLER_MANAGER_IMAGE_VERSION ?= $(TAG)
+HUB_GATEWAY_CONTROLLER_MANAGER_IMAGE_VERSION ?= $(TAG)
 MEMBER_NET_CONTROLLER_MANAGER_IMAGE_VERSION ?= $(TAG)
 MCS_CONTROLLER_MANAGER_IMAGE_VERSION ?= $(TAG)
 NET_CRD_INSTALLER_IMAGE_VERSION ?= $(TAG)
+AFD_PLS_ECHO_IMAGE_VERSION ?= $(TAG)
 
 HUB_NET_CONTROLLER_MANAGER_IMAGE_NAME ?= hub-net-controller-manager
+HUB_GATEWAY_CONTROLLER_MANAGER_IMAGE_NAME ?= hub-gateway-controller-manager
 MEMBER_NET_CONTROLLER_MANAGER_IMAGE_NAME ?= member-net-controller-manager
 MCS_CONTROLLER_MANAGER_IMAGE_NAME ?= mcs-controller-manager
 NET_CRD_INSTALLER_IMAGE_NAME ?= net-crd-installer
+AFD_PLS_ECHO_IMAGE_NAME ?= afd-pls-echo
 
 TARGET_OS ?= linux
 TARGET_ARCH ?= amd64
@@ -155,6 +159,22 @@ e2e-collect-logs:
 e2e-cleanup:
 	bash test/scripts/cleanup.sh
 
+.PHONY: phase7-e2e-preflight
+phase7-e2e-preflight: ## Validate the Phase 7 Azure plan without mutation.
+	bash test/e2e/afdprivatelink/scripts/preflight.sh
+
+.PHONY: phase7-e2e-setup
+phase7-e2e-setup: ## Provision the explicitly approved, bounded Phase 7 validation environment.
+	bash test/e2e/afdprivatelink/scripts/setup.sh
+
+.PHONY: phase7-e2e-evidence
+phase7-e2e-evidence: ## Collect a read-only Phase 7 snapshot; set EVIDENCE_LABEL if desired.
+	bash test/e2e/afdprivatelink/scripts/collect-evidence.sh "$(or $(EVIDENCE_LABEL),snapshot)"
+
+.PHONY: phase7-e2e-cleanup
+phase7-e2e-cleanup: ## Delete only the validated Phase 7 run roles and tagged resource groups.
+	bash test/e2e/afdprivatelink/scripts/cleanup.sh
+
 reviewable: fmt vet lint staticcheck
 	go mod tidy
 
@@ -218,11 +238,11 @@ tidy:
 
 .PHONY: image
 image:
-	$(MAKE) OUTPUT_TYPE="type=docker" docker-build-hub-net-controller-manager docker-build-member-net-controller-manager docker-build-mcs-controller-manager docker-build-net-crd-installer
+	$(MAKE) OUTPUT_TYPE="type=docker" docker-build-hub-net-controller-manager docker-build-hub-gateway-controller-manager docker-build-member-net-controller-manager docker-build-mcs-controller-manager docker-build-net-crd-installer
 
 .PHONY: push
 push:
-	$(MAKE) OUTPUT_TYPE="type=registry" docker-build-hub-net-controller-manager docker-build-member-net-controller-manager docker-build-mcs-controller-manager docker-build-net-crd-installer
+	$(MAKE) OUTPUT_TYPE="type=registry" docker-build-hub-net-controller-manager docker-build-hub-gateway-controller-manager docker-build-member-net-controller-manager docker-build-mcs-controller-manager docker-build-net-crd-installer
 
 # By default, docker buildx create will pull image moby/buildkit:buildx-stable-1 and hit the too many requests error.
 .PHONY: docker-buildx-builder
@@ -254,6 +274,18 @@ docker-build-hub-net-controller-manager: docker-buildx-builder tidy
 		--platform=$(TARGET_OS)/$(TARGET_ARCH) \
 		--pull \
 		--tag $(REGISTRY)/$(HUB_NET_CONTROLLER_MANAGER_IMAGE_NAME):$(HUB_NET_CONTROLLER_MANAGER_IMAGE_VERSION) \
+		--progress=$(BUILDKIT_PROGRESS_TYPE) \
+		--build-arg GOARCH=$(TARGET_ARCH) \
+		--build-arg GOOS=$(TARGET_OS) .
+
+.PHONY: docker-build-hub-gateway-controller-manager
+docker-build-hub-gateway-controller-manager: docker-buildx-builder tidy
+	docker buildx build \
+		--file docker/$(HUB_GATEWAY_CONTROLLER_MANAGER_IMAGE_NAME).Dockerfile \
+		--output=$(OUTPUT_TYPE) \
+		--platform=$(TARGET_OS)/$(TARGET_ARCH) \
+		--pull \
+		--tag $(REGISTRY)/$(HUB_GATEWAY_CONTROLLER_MANAGER_IMAGE_NAME):$(HUB_GATEWAY_CONTROLLER_MANAGER_IMAGE_VERSION) \
 		--progress=$(BUILDKIT_PROGRESS_TYPE) \
 		--build-arg GOARCH=$(TARGET_ARCH) \
 		--build-arg GOOS=$(TARGET_OS) .
@@ -293,6 +325,16 @@ docker-build-net-crd-installer: docker-buildx-builder tidy
 		--progress=$(BUILDKIT_PROGRESS_TYPE) \
 		--build-arg GOARCH=$(TARGET_ARCH) \
 		--build-arg GOOS=$(TARGET_OS) .
+
+.PHONY: docker-build-afd-pls-echo
+docker-build-afd-pls-echo: docker-buildx-builder
+	docker buildx build \
+		--file test/e2e/afdprivatelink/echo/Dockerfile \
+		--output=$(OUTPUT_TYPE) \
+		--platform=$(TARGET_OS)/$(TARGET_ARCH) \
+		--pull \
+		--tag $(REGISTRY)/$(AFD_PLS_ECHO_IMAGE_NAME):$(AFD_PLS_ECHO_IMAGE_VERSION) \
+		--progress=$(BUILDKIT_PROGRESS_TYPE) .
 
 ## -----------------------------------
 ## Cleanup

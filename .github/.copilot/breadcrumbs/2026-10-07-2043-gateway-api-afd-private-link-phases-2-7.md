@@ -8,7 +8,8 @@
 - Keep each phase independently reviewable and validated.
 - Create and push exactly one implementation commit for each completed phase.
 - Do not squash, amend, or combine phase commits.
-- Run the real Azure E2E test before claiming Phase 7 complete.
+- Complete the human-run real-Azure checklist, retain evidence, and verify cleanup before claiming
+  Phase 7 complete.
 - Obtain fresh confirmation before provisioning or deleting billable Azure/AKS resources.
 
 ## Additional comments from user
@@ -422,32 +423,62 @@ explicitly out of scope.
   - Commit as `feat: complete Gateway status and lifecycle` and push.
   - Success criteria: all Phase 6 conditions and deletion-order tests pass.
 
-### Phase 6: Implement POC Phase 7 - real Azure E2E
+### Phase 6: Implement POC Phase 7 - human-run real-Azure validation
 
-- [ ] **Task 6.1: Write the E2E scenario and cleanup tests first.**
-  - Add a tagged Ginkgo scenario and reusable Azure/Kubernetes helpers for hub, two members, Service,
-    ILB, PLS, WAF, Gateway resources, traffic assertions, label withdrawal, outage, and cleanup.
+Phase 7 preparation resumes from commit `37ca0ca9828d17b1b792e73be4bea207f9cbc36f`.
+This task is limited to the non-mutating harness preparation requested on 2026-10-08. No Azure
+or Kubernetes resource may be created, changed, or deleted, and the resulting changes remain
+uncommitted pending fresh cloud-mutation confirmation.
+
+#### Phase 7 preparation plan
+
+1. **Phase 1: Encode the scenario and safety contracts.**
+   - [x] **Task 1.1:** Add an authoritative operator checklist and read-only shell evidence helper
+     that record resource IDs, conditions, and HTTP results across the complete two-member lifecycle.
+   - [x] **Task 1.2:** Add non-mutating validation for required environment, immutable images,
+     deterministic naming, inventory boundaries, and explicit mutation acknowledgement.
+   - Success criteria: every manual assertion has exact commands/expected output and missing
+     configuration fails before any mutating command.
+2. **Phase 2: Add bounded infrastructure lifecycle scripts.**
+   - [x] **Task 2.1:** Add deterministic setup using one tagged resource group, explicit named
+     kubeconfig contexts, and an append-only state inventory.
+   - [x] **Task 2.2:** Add idempotent cleanup restricted to inventory entries or the exact tagged
+     deterministic resource group after subscription and tag validation.
+   - Success criteria: setup traps failures, cleanup has no broad discovery/deletion path, and live
+     mutation requires `AFD_PLS_E2E_APPROVED=true`.
+3. **Phase 3: Integrate and validate without mutation.**
+   - [x] **Task 3.1:** Add Makefile targets and operator documentation for preflight, setup,
+     evidence collection, and cleanup.
+   - [x] **Task 3.2:** Run shell syntax/static checks, Docker/Helm checks, read-only preflight, and
+     `git diff --check`.
+   - Success criteria: validation passes without `az`/`kubectl`/Helm mutation and the billable plan
+     plus cleanup boundary are printed for explicit approval.
+
+- [x] **Task 6.1: Write the human validation and evidence checklist first.**
+  - Add exact human-run Azure/Kubernetes commands and a shell evidence helper for hub, two members,
+    Service, ILB, PLS, WAF, Gateway resources, traffic assertions, label withdrawal, outage, and
+    cleanup. Phase 7 intentionally has no Go/Ginkgo runner.
   - Success criteria: configuration validation fails before any cloud mutation when required inputs
     are missing.
-- [ ] **Task 6.2: Add idempotent infrastructure setup and cleanup.**
+- [x] **Task 6.2: Add idempotent infrastructure setup and cleanup.**
   - Follow existing test script conventions, use phase-specific deterministic names/tags, and
     record every created resource ID.
-  - Success criteria: cleanup targets only resources created by this E2E run.
+  - Success criteria: cleanup targets only resources created by this validation run.
 - [ ] **Task 6.3: Obtain cloud-provisioning confirmation.**
   - Present the active subscription/context at a non-sensitive summary level, expected billable
     resources, and cleanup scope.
   - Success criteria: the user explicitly approves live provisioning immediately before mutation.
-- [ ] **Task 6.4: Run the complete Azure E2E.**
+- [ ] **Task 6.4: Perform the complete human-run Azure validation.**
   - Verify normal traffic reaches both members, `X-POC-Block:true` returns 403, label withdrawal
     removes one origin without interruption, hub-controller outage preserves traffic, Gateway
     deletion removes owned AFD resources, and external resources remain.
-  - Success criteria: every Phase 7 data-plane and lifecycle assertion passes.
+  - Success criteria: a human witnesses every Phase 7 data-plane/lifecycle result and retains the
+    labelled JSONL evidence snapshots.
 - [ ] **Task 6.5: Clean up and verify no owned resources remain.**
   - Run cleanup even after failures and query Azure/Kubernetes for deterministic leftovers.
   - Success criteria: cleanup is idempotent and no controller-owned resource remains.
 - [ ] **Task 6.6: Document, commit, and push Phase 7.**
-  - Commit as `test: add AFD Private Link Azure E2E` and push only after recording truthful test
-    results.
+  - Commit only after recording truthful human-validation and cleanup results.
   - Success criteria: Phase 7 is not marked complete on a dry run or unexecuted harness.
 
 ### Detailed checklist
@@ -474,8 +505,8 @@ explicitly out of scope.
 - [x] Phase 5 / Task 5.3 completed.
 - [x] Phase 5 / Task 5.4 completed.
 - [x] Phase 5 / Task 5.5 completed.
-- [ ] Phase 6 / Task 6.1 completed.
-- [ ] Phase 6 / Task 6.2 completed.
+- [x] Phase 6 / Task 6.1 completed.
+- [x] Phase 6 / Task 6.2 completed.
 - [ ] Phase 6 / Task 6.3 completed.
 - [ ] Phase 6 / Task 6.4 completed.
 - [ ] Phase 6 / Task 6.5 completed.
@@ -504,7 +535,7 @@ explicitly out of scope.
   hub client.
 - Require a new user confirmation before live Phase 7 provisioning despite the overall plan
   approval, because AKS and AFD Premium resources are billable and cleanup is destructive.
-- Do not commit or report Phase 7 complete unless the real E2E runs and cleanup is verified.
+- Do not commit or report Phase 7 complete unless the human-run checklist and cleanup are verified.
 
 ## Implementation Details
 
@@ -535,6 +566,73 @@ The user approved the delivery plan.
 - Race-enabled focused tests passed for the controller and hub Gateway manager.
 - `go vet`, `golint`, repository formatting, and `git diff --check` passed.
 
+### Phase 7 non-mutating preparation
+
+Tasks 6.1 and 6.2 were reopened on 2026-10-08 after review found that the initial harness
+depended on four pre-published images and three externally rendered manifests that do not exist.
+The approved preparation work is to make the harness self-contained without running mutations:
+
+1. **Phase 1 — build inputs:** add the missing hub Gateway image definition, deterministic echo
+   source, image targets, and a minimal hub Gateway chart.
+2. **Phase 2 — lifecycle:** make preflight validate local build inputs and the complete billable
+   plan; make setup create a run-scoped ACR, publish and digest-resolve all images, provision
+   workload identities and resource-group-scoped built-in roles, bootstrap scoped Fleet member access, render
+   digest-only manifests, and apply the complete topology.
+3. **Phase 3 — safety and alignment:** preserve the approval guard, explicit kubeconfig contexts,
+   tagged cleanup boundary, inventory, and human-readable evidence collection.
+4. **Phase 4 — non-mutating validation:** run syntax, read-only preflight, Docker/Helm definition
+   checks, and whitespace checks. Tasks 6.1/6.2 may be checked
+   again only when these preparation criteria pass; Phase 7 remains incomplete until Tasks
+   6.3–6.6 are performed.
+
+- Added an authoritative, copy-paste operator checklist for controller/Fleet deployment, two member
+  labels, echo Services, AKS-created ILBs/PLS resources, assignment approval, Gateway/backend
+  programming, two-origin traffic, WAF 403, label withdrawal, fail-static outage, and ownership
+  deletion. Removed the provisional Go/Ginkgo runner by explicit decision.
+- Added a read-only shell evidence helper that appends Kubernetes status, Azure resource IDs, and
+  HTTP results to the run-specific JSONL file without reading Secrets.
+- Added guarded preflight, setup, and cleanup scripts. Names derive only from a validated run ID;
+  every mutation path requires `AFD_PLS_E2E_APPROVED=true`; setup writes a JSON inventory and traps
+  failures; cleanup validates subscription, exact deterministic names, and source/run tags before
+  deleting the primary group or three unavoidable AKS node resource groups.
+- Added the missing hub Gateway Dockerfile/image target, deterministic echo source/image, minimal
+  hub Gateway chart, and digest support plus static scoped-token support in the existing member
+  chart.
+- Made setup self-contained: it creates a deterministic tagged Basic ACR, builds/pushes all four
+  images, resolves immutable digests, provisions three workload identities and federated
+  credentials, creates exact built-in role assignments, records AKS identities/role assignments, and
+  renders/applies only digest-pinned manifests through explicit generated contexts.
+- Pinned Fleet registration CRDs to `v0.14.0` and Gateway API standard CRDs to `v1.2.1`, matching
+  `go.mod`. Because this repository does not contain Fleet registration agents/charts, setup
+  truthfully uses a validation-scoped substitute: explicit MemberClusters, reserved namespaces,
+  namespace-scoped service accounts/RBAC, 24-hour bound tokens, and Joined conditions.
+- Added a standalone operator runbook covering tools/login, exact subscription selection,
+  preflight, billable resources, the explicit mutation acknowledgement, setup/render behavior,
+  tagged execution, evidence, monitoring, reruns, recovery, bounded cleanup, deletion
+  verification, and environment teardown.
+
+### Phase 7 preparation validation and preflight evidence
+
+- `bash -n` passed for all new scripts. ShellCheck was unavailable.
+- Missing-approval setup failed immediately with status 1 before preflight or mutation.
+- The final read-only Azure preflight passed against `AKS Fleet Development/Test`
+  (`d712bfad-d238-486f-8f1b-bf61a831b712`): both required providers are registered; East US 2
+  reported 0/10000 regional vCPUs and 0/100 DSv3-family vCPUs in use.
+- The printed plan used run ID `p7-20261008`, primary resource group
+  `fleet-afd-pls-p7-20261008`, Basic ACR `fleetp7p720261008d712`, four image repositories, three
+  controller identities/federations, AKS-managed identities, three RG-scoped built-in role assignments, three one-node
+  `Standard_D2as_v4` clusters, one VNet, two ILBs, two PLS resources, one AFD Premium graph, and one
+  WAF policy. No provisioning, image publication, Kubernetes mutation, live validation, or cleanup
+  ran.
+- The subscription custom-role quota was exhausted during the first successful AKS provisioning
+  attempt. Bounded cleanup completed. With explicit user approval, the retry uses built-in
+  `Contributor` scoped only to the disposable primary RG for the hub identity and
+  `Network Contributor` scoped only to each disposable member node RG.
+- Docker buildx `--check` passed for all four Dockerfiles; both Helm charts linted; `bash -n` and
+  `git diff --check` passed. ShellCheck was unavailable.
+- Tasks 6.3 through 6.6 remain unchecked pending fresh mutation confirmation, the live run,
+  verified cleanup, and commit/push.
+
 ## Changes Made
 
 - Committed and pushed Phase 1 as `395e965`.
@@ -544,6 +642,25 @@ The user approved the delivery plan.
 - Implemented and validated POC Phase 2.
 - Implemented and validated POC Phase 4 after the approved ownership-contract correction.
 - Implemented and validated POC Phase 3 member origin discovery.
+- Reworked and locally validated self-contained Phase 7 Tasks 6.1 and 6.2 without cloud or
+  Kubernetes mutation. Phase 7 remains incomplete.
+
+### Phase 7 live-attempt status
+
+- The user explicitly approved provisioning in `AKS Fleet Development/Test` and bounded cleanup of
+  the exact tagged primary and node resource groups.
+- The initial attempt rejected `Standard_D2s_v3`; bounded cleanup completed. The runbook now uses
+  subscription-allowed `Standard_D2as_v4`.
+- A later attempt exposed exhausted custom-role quota; bounded cleanup completed. The user approved
+  built-in `Contributor` scoped only to the disposable primary RG and `Network Contributor` scoped
+  only to each disposable member node RG.
+- Context normalization, RG-scoped role-assignment cleanup guards, explicit deployment waits, and
+  pre-cleanup diagnostics were added after subsequent guarded attempts.
+- The latest attempt reached controller deployment but
+  `hub-gateway-controller-manager` did not become available. The termination trap started bounded
+  cleanup and retained `.phase7-p7-20261008.results.setup-failure.log`.
+- The complete human checklist was not performed. Tasks 6.4-6.6 remain incomplete, and this
+  in-progress runbook commit must not be reported as Phase 7 completion.
 
 ## Before/After Comparison
 
@@ -571,4 +688,5 @@ The user approved the delivery plan.
 - `cmd/hub-gateway-controller-manager` — hub Gateway process and feature gate.
 - `cmd/member-net-controller-manager` — member process with local and scoped hub clients.
 - `pkg/controllers/hub/gatewaymodel` — provider-neutral normalized model foundation.
-- `test/e2e` and `test/scripts` — repository E2E conventions and cleanup patterns.
+- `test/scripts` — repository infrastructure setup and cleanup conventions.
+- Azure CLI read-only account, provider, and regional quota queries — Phase 7 preflight evidence.

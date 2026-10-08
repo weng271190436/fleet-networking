@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hub-gateway-azure-cloud-config
+  namespace: {{ .Values.fleetSystemNamespace }}
+type: Opaque
+stringData:
+  azure.json: |
+    {
+      "cloud": "AzurePublicCloud",
+      "tenantId": {{ .Values.azure.tenantId | quote }},
+      "subscriptionId": {{ .Values.azure.subscriptionId | quote }},
+      "aadClientId": {{ .Values.azure.clientId | quote }},
+      "useFederatedWorkloadIdentityExtension": true,
+      "resourceGroup": {{ .Values.azure.resourceGroup | quote }}
+    }

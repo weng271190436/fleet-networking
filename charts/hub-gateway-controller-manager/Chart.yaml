@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hub-gateway-controller-manager
+description: Fleet Gateway API Azure Front Door controller
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

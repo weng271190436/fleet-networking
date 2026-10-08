@@ -1,0 +1,54 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hub-gateway-controller-manager
+rules:
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [create, get, list, update]
+- apiGroups: [apiextensions.k8s.io]
+  resources: [customresourcedefinitions]
+  verbs: [create, get, list, patch, update, watch]
+- apiGroups: [cluster.kubernetes-fleet.io]
+  resources: [memberclusters]
+  verbs: [get, list, watch]
+- apiGroups: [networking.fleet.azure.com]
+  resources: [multiclusterbackends]
+  verbs: [get, list, watch, update, patch]
+- apiGroups: [networking.fleet.azure.com]
+  resources: [multiclusterbackends/status]
+  verbs: [get, update, patch]
+- apiGroups: [networking.fleet.azure.com]
+  resources: [multiclusterbackends/finalizers, serviceoriginassignments/finalizers]
+  verbs: [update]
+- apiGroups: [networking.fleet.azure.com]
+  resources: [serviceoriginassignments]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [networking.fleet.azure.com]
+  resources: [serviceoriginassignments/status]
+  verbs: [get]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gatewayclasses, gateways, httproutes]
+  verbs: [get, list, watch, update, patch]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gatewayclasses/status, gateways/status, httproutes/status]
+  verbs: [get, update, patch]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gateways/finalizers]
+  verbs: [update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hub-gateway-controller-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hub-gateway-controller-manager
+subjects:
+- kind: ServiceAccount
+  name: hub-gateway-controller-manager
+  namespace: {{ .Values.fleetSystemNamespace }}

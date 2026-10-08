@@ -35,3 +35,6 @@ coverage.xml
 examples/getting-started/app/env
 
 .vscode/
+
+# Phase 7 AFD Private Link E2E generated credentials, manifests, state, and evidence
+.phase7-*

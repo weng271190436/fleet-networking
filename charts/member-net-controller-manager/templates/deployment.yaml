@@ -18,12 +18,15 @@ spec:
       {{- end }}
       labels:
         {{- include "member-net-controller-manager.selectorLabels" . | nindent 8 }}
+        {{- if .Values.azure.workloadIdentityEnabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
     spec:
       serviceAccountName: {{ include "member-net-controller-manager.fullname" . }}-sa
       {{- if and .Values.crdInstaller.enabled .Values.enableNetworkingFeatures}}
       initContainers:
         - name: net-crd-installer
-          image: "{{ .Values.crdInstaller.image.repository }}:{{ .Values.crdInstaller.image.tag }}"
+          image: "{{ .Values.crdInstaller.image.repository }}{{ if .Values.crdInstaller.image.digest }}@{{ .Values.crdInstaller.image.digest }}{{ else }}:{{ .Values.crdInstaller.image.tag }}{{ end }}"
           imagePullPolicy: {{ .Values.crdInstaller.image.pullPolicy }}
           args:
             - --mode=member
@@ -34,7 +37,7 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ else }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --leader-election-namespace={{ .Values.leaderElectionNamespace }}
@@ -93,6 +96,7 @@ spec:
             mountPath: /etc/kubernetes/provider
             readOnly: true
           {{- end }}
+        {{- if not .Values.config.staticTokenSecret }}
         - name: refresh-token
           image: "{{ .Values.refreshtoken.repository }}:{{ .Values.refreshtoken.tag }}"
           imagePullPolicy: {{ .Values.refreshtoken.pullPolicy }}
@@ -111,9 +115,18 @@ spec:
           volumeMounts:
           - name: provider-token
             mountPath: /config
+        {{- end }}
       volumes:
       - name: provider-token
+        {{- if .Values.config.staticTokenSecret }}
+        secret:
+          secretName: {{ .Values.config.staticTokenSecret }}
+          items:
+          - key: token
+            path: token
+        {{- else }}
         emptyDir: {}
+        {{- end }}
       {{- if or .Values.enableTrafficManagerFeature .Values.enableAFDPrivateLinkFeature }}
       - name: cloud-provider-config
         secret:

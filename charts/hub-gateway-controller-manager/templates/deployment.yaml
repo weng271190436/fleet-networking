@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hub-gateway-controller-manager
+  namespace: {{ .Values.fleetSystemNamespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: hub-gateway-controller-manager
+  template:
+    metadata:
+      labels:
+        app: hub-gateway-controller-manager
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: hub-gateway-controller-manager
+      initContainers:
+      - name: net-crd-installer
+        image: "{{ required "crdInstaller.image.repository is required" .Values.crdInstaller.image.repository }}@{{ required "crdInstaller.image.digest is required" .Values.crdInstaller.image.digest }}"
+        imagePullPolicy: {{ .Values.crdInstaller.image.pullPolicy }}
+        args: [--mode=hub, --e2e-test=true, --v=2]
+      containers:
+      - name: manager
+        image: "{{ required "image.repository is required" .Values.image.repository }}@{{ required "image.digest is required" .Values.image.digest }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --enable-afd={{ .Values.afd.enabled }}
+        - --afd-resource-group={{ .Values.azure.resourceGroup }}
+        - --cloud-config=/etc/azure/azure.json
+        - --leader-election-namespace={{ .Values.fleetSystemNamespace }}
+        ports:
+        - {name: metrics, containerPort: 8082}
+        - {name: healthz, containerPort: 8083}
+        readinessProbe: {httpGet: {path: /readyz, port: healthz}}
+        livenessProbe: {httpGet: {path: /healthz, port: healthz}}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - {name: cloud-config, mountPath: /etc/azure, readOnly: true}
+      volumes:
+      - name: cloud-config
+        secret:
+          secretName: hub-gateway-azure-cloud-config

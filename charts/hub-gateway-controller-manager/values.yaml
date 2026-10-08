@@ -1,0 +1,25 @@
+replicaCount: 1
+fleetSystemNamespace: fleet-system
+image:
+  repository: ghcr.io/azure/fleet-networking/hub-gateway-controller-manager
+  digest: ""
+  pullPolicy: IfNotPresent
+crdInstaller:
+  image:
+    repository: ghcr.io/azure/fleet-networking/net-crd-installer
+    digest: ""
+    pullPolicy: IfNotPresent
+azure:
+  clientId: ""
+  tenantId: ""
+  subscriptionId: ""
+  resourceGroup: ""
+afd:
+  enabled: true
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
