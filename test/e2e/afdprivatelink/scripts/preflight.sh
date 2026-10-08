@@ -43,7 +43,8 @@ grep -Fq 'MEMBER_NAME' "${REPO_ROOT}/test/e2e/afdprivatelink/echo/entrypoint.sh"
 HELM_NO_PLUGINS=1 helm lint "${REPO_ROOT}/charts/hub-gateway-controller-manager" \
     --set image.digest="sha256:$(printf '0%.0s' {1..64})" \
     --set crdInstaller.image.digest="sha256:$(printf '1%.0s' {1..64})" \
-    --set azure.clientId=00000000-0000-0000-0000-000000000000 >/dev/null
+    --set azure.clientId=00000000-0000-0000-0000-000000000000 \
+    --set azure.location=eastus2 >/dev/null
 HELM_NO_PLUGINS=1 helm lint "${REPO_ROOT}/charts/member-net-controller-manager" \
     --set fullnameOverride=member-net-controller-manager \
     --set image.digest="sha256:$(printf '2%.0s' {1..64})" \

@@ -181,8 +181,14 @@ Generated files are mode-protected and run-scoped:
 .phase7-${AFD_PLS_E2E_RUN_ID}/member-2.yaml
 ```
 
+Generated paths are always recomputed from the current run ID. This prevents a new run in the same
+shell from accidentally reusing an earlier run's state or kubeconfig path.
+
 The state inventory records ACR/image digests, identities, federated credentials, role assignments,
 AKS-created assignments, resource IDs, and RGs. It contains no bearer tokens.
+
+The member chart uses reduced 25m CPU requests for each controller pod container in this
+single-node validation topology; default production chart requests are unchanged.
 
 If setup fails, it writes `.phase7-${AFD_PLS_E2E_RUN_ID}.results.setup-failure.log` before bounded
 cleanup. Review that file before retrying.

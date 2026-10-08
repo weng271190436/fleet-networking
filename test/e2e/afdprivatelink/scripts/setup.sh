@@ -340,7 +340,8 @@ HELM_NO_PLUGINS=1 helm template phase7 "${REPO_ROOT}/charts/hub-gateway-controll
     --set-string crdInstaller.image.repository="${crd_repo}" --set-string crdInstaller.image.digest="${crd_digest}" \
     --set-string azure.clientId="${hub_gateway_client_id}" --set-string azure.tenantId="${tenant_id}" \
     --set-string azure.subscriptionId="${EXPECTED_SUBSCRIPTION_ID}" \
-    --set-string azure.resourceGroup="${AFD_PLS_E2E_RESOURCE_GROUP}" >"${AFD_PLS_E2E_HUB_MANIFEST}"
+    --set-string azure.resourceGroup="${AFD_PLS_E2E_RESOURCE_GROUP}" \
+    --set-string azure.location="${AFD_PLS_E2E_LOCATION}" >"${AFD_PLS_E2E_HUB_MANIFEST}"
 
 render_member() {
     local manifest="$1" member_name="$2" client_id="$3" node_rg="$4"
@@ -354,6 +355,7 @@ render_member() {
         --set-string config.memberClusterName="${member_name}" --set-string config.provider=azure \
         --set-string refreshtoken.repository="${refresh_token_repo}" \
         --set-string refreshtoken.digest="${refresh_token_digest}" \
+        --set-string resources.requests.cpu=25m --set-string resources.requests.memory=64Mi \
         --set tlsClientInsecure=false \
         --set-string azure.clientid="${client_id}" --set azure.workloadIdentityEnabled=true \
         --set enableTrafficManagerFeature=false \

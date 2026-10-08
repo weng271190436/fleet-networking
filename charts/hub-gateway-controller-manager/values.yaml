@@ -14,6 +14,7 @@ azure:
   tenantId: ""
   subscriptionId: ""
   resourceGroup: ""
+  location: ""
 afd:
   enabled: true
 resources:

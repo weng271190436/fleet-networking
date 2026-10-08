@@ -673,6 +673,11 @@ The approved preparation work is to make the harness self-contained without runn
   `Joined=True` status/heartbeat before marking the selector-facing `MemberCluster` joined. Only
   that aggregate `MemberCluster` status remains synthetic because this repository does not ship
   Fleet's core MemberCluster controller.
+- Retained diagnostics identified two deployment blockers: the hub cloud config omitted Azure
+  location, and the two-container member pod could not fit beside AKS system add-ons with default
+  requests on a one-node validation cluster. The hub chart now requires location, Phase 7 renders
+  25m member-container CPU requests, and all generated paths are recomputed from the active run ID
+  to prevent stale state-path reuse.
 
 ## Before/After Comparison
 

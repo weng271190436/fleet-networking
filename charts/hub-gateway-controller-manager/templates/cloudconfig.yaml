@@ -12,5 +12,6 @@ stringData:
       "subscriptionId": {{ .Values.azure.subscriptionId | quote }},
       "aadClientId": {{ .Values.azure.clientId | quote }},
       "useFederatedWorkloadIdentityExtension": true,
-      "resourceGroup": {{ .Values.azure.resourceGroup | quote }}
+      "resourceGroup": {{ .Values.azure.resourceGroup | quote }},
+      "location": {{ required "azure.location is required" .Values.azure.location | quote }}
     }
