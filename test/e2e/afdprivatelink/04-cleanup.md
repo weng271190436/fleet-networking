@@ -3,8 +3,10 @@
 [Previous: lifecycle validation](03-lifecycle-validation.md) ·
 [Next: infrastructure setup (new run)](01-infrastructure-setup.md)
 
-> **Status: Pending.** Retained run `p7-10082105` still has its test infrastructure. Do not infer
-> Phase 7 completion until bounded cleanup and deletion verification pass.
+> **Status: Validated.** Bounded cleanup for retained run `p7-10082105` completed successfully on
+> 2026-10-09. All four run-owned resource groups are absent, generated local state was removed,
+> and the JSONL evidence file was preserved. Phase 7 completion still depends on any outstanding
+> lifecycle assertions in Part 3.
 
 In a new shell, export the exact approved run values and initialize deterministic names before any
 cleanup or recovery command:

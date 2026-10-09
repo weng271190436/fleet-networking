@@ -1228,3 +1228,20 @@ the validated POC workflow.
 - `bash -n` passed for `common.sh`, `cleanup.sh`, and all Bash fences in Part 4.
 - `git diff --check` passed. ShellCheck was unavailable.
 - No Azure deletion or other cloud/Kubernetes mutation was executed.
+
+### Retained-run cleanup result
+
+On 2026-10-09 the user explicitly approved and requested execution of bounded cleanup for
+`p7-10082105`. `make phase7-e2e-cleanup` completed with exit code 0 after validating and deleting
+the recorded role assignments and the exact tagged run resource groups.
+
+Read-only post-cleanup verification returned `false` for:
+
+- `fleet-afd-pls-p7-10082105`;
+- `fleet-afd-pls-p7-10082105-hub-nodes`;
+- `fleet-afd-pls-p7-10082105-m1-nodes`; and
+- `fleet-afd-pls-p7-10082105-m2-nodes`.
+
+The generated kubeconfig, state JSON, and artifact directory are absent. The run-scoped JSONL
+evidence file remains. Cleanup is complete, but Phase 7 must not be declared complete until the
+outstanding fail-static lifecycle assertion is resolved.
