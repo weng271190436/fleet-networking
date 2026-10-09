@@ -91,6 +91,10 @@ commands the authoritative setup workflow. The seven stage scripts and Make targ
 optional automation/reference only. No Azure/Kubernetes mutation, retained `.phase7` artifact
 change, commit, or push is approved.
 
+Manual commands must never silently enable `errexit`, `nounset`, or `pipefail` in the operator's
+interactive shell. Shared helpers may be sourced without changing shell options, and failure-prone
+command blocks must print actionable errors and return control for diagnosis.
+
 #### Phase 1: Authoritative operator workflow
 
 - [x] **Task L1.1: Replace Section 6 with seven literal command stages.**

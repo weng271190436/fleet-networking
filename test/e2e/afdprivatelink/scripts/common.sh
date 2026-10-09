@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 
-set -o errexit
-set -o nounset
-set -o pipefail
-
 readonly EXPECTED_SUBSCRIPTION_ID="d712bfad-d238-486f-8f1b-bf61a831b712"
 readonly EXPECTED_SUBSCRIPTION_NAME="AKS Fleet Development/Test"
 readonly RUN_ID_PATTERN='^[a-z0-9][a-z0-9-]{2,14}$'

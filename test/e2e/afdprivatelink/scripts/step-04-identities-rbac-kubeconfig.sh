@@ -106,9 +106,11 @@ resource_group_id="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${A
 ensure_assignment() {
     local principal="$1" role_id="$2" scope="$3" logical_name="$4"
     local matches assignment_id
-    matches="$(az role assignment list --assignee-object-id "${principal}" --scope "${scope}" -o json |
-        jq --arg role_id "${role_id}" --arg scope "${scope}" \
+    matches="$(az role assignment list --assignee-object-id "${principal}" --scope "${scope}" \
+        --fill-principal-name false -o json |
+        jq --arg principal "${principal}" --arg role_id "${role_id}" --arg scope "${scope}" \
             '[.[] | select((.roleDefinitionId | ascii_downcase | endswith("/" + ($role_id | ascii_downcase))) and
+              (.principalId | ascii_downcase) == ($principal | ascii_downcase) and
               (.scope | ascii_downcase) == ($scope | ascii_downcase))]')"
     if [[ "$(jq 'length' <<<"${matches}")" -gt 1 ]]; then
         echo "error: multiple matching role assignments exist for ${logical_name}" >&2

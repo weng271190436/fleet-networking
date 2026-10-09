@@ -161,6 +161,10 @@ operations are local only:
 
 ```bash
 source test/e2e/afdprivatelink/scripts/common.sh
+# Keep the operator's interactive shell alive when an individual command fails.
+set +e
+set +u
+set +o pipefail
 initialize_names
 validate_subscription
 initialize_state
@@ -530,28 +534,79 @@ Create missing assignments only at the approved RG scopes:
 
 ```bash
 ensure_assignment() {
-  local principal="$1" role_id="$2" scope="$3" logical_name="$4" matches assignment_id
-  matches="$(az role assignment list --assignee-object-id "$principal" --scope "$scope" -o json |
-    jq --arg role "$role_id" --arg scope "$scope" \
-      '[.[] | select((.roleDefinitionId | ascii_downcase | endswith("/" + ($role|ascii_downcase)))
-        and (.scope|ascii_downcase) == ($scope|ascii_downcase))]')"
-  test "$(jq 'length' <<<"$matches")" -le 1
-  if test "$(jq 'length' <<<"$matches")" -eq 0; then
-    matches="$(az role assignment create --assignee-object-id "$principal" \
-      --assignee-principal-type ServicePrincipal --role "$role_id" --scope "$scope" -o json)"
-    assignment_id="$(jq -r '.id' <<<"$matches")"
-  else
-    assignment_id="$(jq -r '.[0].id' <<<"$matches")"
+  local principal="$1" role_id="$2" scope="$3" logical_name="$4"
+  local all_assignments matches count assignment created
+
+  echo "Inspecting ${logical_name} assignment at ${scope}"
+  if ! all_assignments="$(az role assignment list --assignee-object-id "$principal" \
+      --scope "$scope" --fill-principal-name false -o json 2>&1)"; then
+    echo "ERROR: Azure could not list assignments at ${scope}:" >&2
+    printf '%s\n' "$all_assignments" >&2
+    return 1
   fi
-  record_role_assignment "$logical_name" "$principal" "$role_id" "$scope" "$assignment_id"
+  if ! matches="$(jq --arg principal "$principal" --arg role "$role_id" --arg scope "$scope" '
+      [.[] | select(
+        ((.principalId // "") | ascii_downcase) == ($principal | ascii_downcase) and
+        ((.roleDefinitionId // "") | ascii_downcase | endswith("/" + ($role | ascii_downcase))) and
+        ((.scope // "") | ascii_downcase) == ($scope | ascii_downcase)
+      )]' <<<"$all_assignments" 2>&1)"; then
+    echo "ERROR: Could not filter Azure role assignments:" >&2
+    printf '%s\n' "$matches" >&2
+    return 1
+  fi
+  count="$(jq 'length' <<<"$matches")"
+  if (( count > 1 )); then
+    echo "ERROR: Found ${count} matching assignments for ${logical_name}; refusing to choose one." >&2
+    jq . <<<"$matches" >&2
+    return 1
+  fi
+
+  if (( count == 0 )); then
+    echo "Creating ${logical_name} assignment"
+    if ! created="$(az role assignment create --assignee-object-id "$principal" \
+        --assignee-principal-type ServicePrincipal --role "$role_id" \
+        --scope "$scope" -o json 2>&1)"; then
+      echo "ERROR: Azure could not create ${logical_name}:" >&2
+      printf '%s\n' "$created" >&2
+      return 1
+    fi
+    assignment="$(jq -r '.id // empty' <<<"$created")"
+  else
+    assignment="$(jq -r '.[0].id // empty' <<<"$matches")"
+    echo "Reusing ${logical_name}: ${assignment}"
+  fi
+  if [[ -z "$assignment" ]]; then
+    echo "ERROR: Azure returned no assignment ID for ${logical_name}." >&2
+    return 1
+  fi
+  if ! record_role_assignment "$logical_name" "$principal" "$role_id" "$scope" "$assignment"; then
+    echo "ERROR: Could not record ${logical_name} in $AFD_PLS_E2E_STATE_FILE." >&2
+    return 1
+  fi
+  echo "Recorded ${logical_name}"
 }
 primary_scope="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_RESOURCE_GROUP}"
-ensure_assignment "$hub_gateway_principal_id" "$hub_role_id" "$primary_scope" hub-afd
-ensure_assignment "$member_1_principal_id" "$member_role_id" \
-  "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" member-1-pls
-ensure_assignment "$member_2_principal_id" "$member_role_id" \
-  "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" member-2-pls
+if ! ensure_assignment "$hub_gateway_principal_id" "$hub_role_id" "$primary_scope" hub-afd; then
+  echo "STOP: Fix hub-afd above before continuing."
+fi
+if ! ensure_assignment "$member_1_principal_id" "$member_role_id" \
+    "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" \
+    member-1-pls; then
+  echo "STOP: Fix member-1-pls above before continuing."
+fi
+if ! ensure_assignment "$member_2_principal_id" "$member_role_id" \
+    "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" \
+    member-2-pls; then
+  echo "STOP: Fix member-2-pls above before continuing."
+fi
 ```
+
+Each invocation prints either `Reusing`, `Creating`, or a complete `ERROR` message and returns to
+your prompt. Do not continue to kubeconfig commands unless all three print `Recorded`.
+
+`--fill-principal-name false` is required in this environment. It prevents Azure CLI from querying
+Microsoft Graph, which is blocked by the organization's conditional-access token protection policy
+in a headless terminal.
 
 `az aks get-credentials` changes only the run-scoped local kubeconfig:
 
