@@ -125,6 +125,13 @@ must assign dependent locals on separate lines, and final role-assignment invent
 Microsoft Graph principal-name enrichment.
 The first setup-complete evidence snapshot exposed jq's reserved `label` keyword; evidence JSON
 uses a non-keyword argument name while retaining the output field name `label`.
+Live assignment status exposed a Phase 5 bug: approval condition transitions rebuilt status without
+copying `status.origin`, so `InfrastructureReady=True` coexisted with a nil origin and blocked hub
+model construction. Approval status derivation must deep-copy discovered origin facts.
+Hub backend status patches were rejected because manually constructed per-member
+`metav1.Condition` values omitted required `lastTransitionTime`. Member summaries use
+`meta.SetStatusCondition` and preserve the previous per-cluster condition slice to produce valid,
+stable transition timestamps.
 
 ### Phase 7 retained-run hardening
 

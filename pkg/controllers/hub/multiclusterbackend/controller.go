@@ -401,6 +401,10 @@ func (r *Reconciler) updateSelectedStatus(
 	// Reconciliation rejects selections above the fixed limit of 40.
 	backend.Status.SelectedClusters = int32(len(selectedMembers)) // #nosec G115
 	backend.Status.ReadyOrigins = 0
+	existingMembers := make(map[string]fleetnetv1alpha1.MultiClusterBackendMemberStatus, len(old.Status.Members))
+	for i := range old.Status.Members {
+		existingMembers[old.Status.Members[i].ClusterName] = *old.Status.Members[i].DeepCopy()
+	}
 	backend.Status.Members = make([]fleetnetv1alpha1.MultiClusterBackendMemberStatus, 0, len(selectedMembers))
 	for _, memberName := range selectedMembers {
 		ready := false
@@ -435,15 +439,15 @@ func (r *Reconciler) updateSelectedStatus(
 			status = metav1.ConditionTrue
 			reason = fleetnetv1alpha1.MultiClusterBackendMemberReasonReady
 		}
-		backend.Status.Members = append(backend.Status.Members, fleetnetv1alpha1.MultiClusterBackendMemberStatus{
-			ClusterName: memberName,
-			Conditions: []metav1.Condition{{
-				Type:               string(fleetnetv1alpha1.MultiClusterBackendMemberConditionReady),
-				Status:             status,
-				Reason:             string(reason),
-				ObservedGeneration: backend.Generation,
-			}},
+		memberStatus := existingMembers[memberName]
+		memberStatus.ClusterName = memberName
+		meta.SetStatusCondition(&memberStatus.Conditions, metav1.Condition{
+			Type:               string(fleetnetv1alpha1.MultiClusterBackendMemberConditionReady),
+			Status:             status,
+			Reason:             string(reason),
+			ObservedGeneration: backend.Generation,
 		})
+		backend.Status.Members = append(backend.Status.Members, memberStatus)
 	}
 	meta.SetStatusCondition(&backend.Status.Conditions, metav1.Condition{
 		Type:               string(fleetnetv1alpha1.MultiClusterBackendConditionAccepted),

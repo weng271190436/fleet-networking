@@ -445,6 +445,9 @@ func desiredStatus(assignment *fleetnetv1alpha1.ServiceOriginAssignment) fleetne
 	status := fleetnetv1alpha1.ServiceOriginAssignmentStatus{
 		ObservedGeneration: assignment.Generation,
 	}
+	if assignment.Status.Origin != nil {
+		status.Origin = assignment.Status.Origin.DeepCopy()
+	}
 	for _, condition := range assignment.Status.Conditions {
 		if condition.Type == string(fleetnetv1alpha1.ServiceOriginAssignmentConditionServiceResolved) ||
 			condition.Type == string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady) ||

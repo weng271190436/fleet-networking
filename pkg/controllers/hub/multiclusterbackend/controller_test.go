@@ -136,6 +136,16 @@ func TestReconcileSelectsMembersAndAggregatesStatus(t *testing.T) { //nolint:goc
 		gotBackend.Status.Members[1].ClusterName != "member-b" {
 		t.Errorf("member status = %#v, want sorted member-a and member-b", gotBackend.Status.Members)
 	}
+	for i := range gotBackend.Status.Members {
+		ready := meta.FindStatusCondition(
+			gotBackend.Status.Members[i].Conditions,
+			string(fleetnetv1alpha1.MultiClusterBackendMemberConditionReady),
+		)
+		if ready == nil || ready.LastTransitionTime.IsZero() {
+			t.Errorf("member %q Ready condition = %#v, want non-zero transition time",
+				gotBackend.Status.Members[i].ClusterName, ready)
+		}
+	}
 	accepted := meta.FindStatusCondition(gotBackend.Status.Conditions, string(fleetnetv1alpha1.MultiClusterBackendConditionAccepted))
 	if accepted == nil || accepted.Status != metav1.ConditionTrue {
 		t.Errorf("Accepted condition = %#v, want True", accepted)

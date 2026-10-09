@@ -183,6 +183,27 @@ func TestReconcileDiscoveryConditions(t *testing.T) {
 	}
 }
 
+func TestDesiredStatusPreservesOrigin(t *testing.T) {
+	assignment := testAssignment()
+	assignment.Status.ObservedGeneration = assignment.Generation
+	assignment.Status.Origin = &fleetnetv1alpha1.ServiceOriginAssignmentOriginStatus{
+		AzureLocation:        "eastus2",
+		LoadBalancerAddress:  testIngressIP,
+		PrivateLinkServiceID: testPLSID,
+	}
+
+	got := desiredStatus(assignment)
+	if got.Origin == nil {
+		t.Fatal("desiredStatus() Origin = nil, want discovered origin")
+	}
+	if got.Origin == assignment.Status.Origin {
+		t.Fatal("desiredStatus() reused the source Origin pointer, want deep copy")
+	}
+	if diff := originDifference(got.Origin, assignment.Status.Origin); diff != "" {
+		t.Errorf("desiredStatus() origin mismatch: %s", diff)
+	}
+}
+
 func TestReconcileUnchangedStatusDoesNotWrite(t *testing.T) {
 	assignment := testAssignment()
 	memberClient := fake.NewClientBuilder().
