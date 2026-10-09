@@ -112,6 +112,9 @@ while member controllers and refresh-token use each AKS kubelet managed identity
 Controller Deployment pod templates include a checksum of their Azure cloud-config Secret so a
 corrected authentication configuration triggers a new ReplicaSet instead of relying on a
 CrashLoop restart or delayed projected-volume refresh.
+Live member logs showed Helm rendered the requester allowlist with literal quote characters inside
+the argument value. The member chart must quote the complete
+`--afd-requester-subscription-allowlist=<uuid>` scalar, not only the UUID value.
 
 ### Phase 7 retained-run hardening
 
