@@ -923,7 +923,6 @@ render_member() {
     --set tlsClientInsecure=false --set-string azure.clientid="$client" \
     --set azure.workloadIdentityEnabled=false --set enableTrafficManagerFeature=false \
     --set enableAFDPrivateLinkFeature=true \
-    --set-string afdRequesterSubscriptionAllowlist="$EXPECTED_SUBSCRIPTION_ID" \
     --set-string azureCloudConfig.tenantId="$tenant_id" \
     --set-string azureCloudConfig.subscriptionId="$EXPECTED_SUBSCRIPTION_ID" \
     --set-string azureCloudConfig.aadClientId="$client" \
@@ -973,7 +972,7 @@ metadata:
     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
     service.beta.kubernetes.io/azure-pls-create: "true"
     service.beta.kubernetes.io/azure-pls-ip-configuration-subnet: "${subnet}"
-    service.beta.kubernetes.io/azure-pls-visibility: "${EXPECTED_SUBSCRIPTION_ID}"
+    service.beta.kubernetes.io/azure-pls-visibility: "*"
 spec:
   type: LoadBalancer
   selector: {app: echo}
@@ -1246,6 +1245,13 @@ Authentication also follows the existing E2E split:
   identity through IMDS, matching `test/scripts/bootstrap.sh`; and
 - the member AKS control-plane identities receive `Network Contributor` only on the exact test
   VNet so the AKS cloud provider can reconcile ILB and PLS subnets.
+
+AFD creates managed private endpoints from a Microsoft-managed subscription that is distinct from
+`AKS Fleet Development/Test`. The POC therefore sets PLS visibility to `"*"` but does not enable
+PLS auto-approval. The member controller's optional requester-subscription allowlist is left empty;
+approval still requires the exact active assignment, UID, generation, PLS ID, pending state, and
+complete `fleet:<assignment-uid>:<request-token>` message. Production deployments may configure an
+allowlist once their actual AFD-managed requester subscription is known and trusted.
 
 ## 7. Perform the human-run POC validation
 

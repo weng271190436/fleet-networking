@@ -113,11 +113,37 @@ func TestReconcile_ReturnsPartialRetryableError(t *testing.T) {
 	if err == nil || !IsRetryable(err) || !strings.Contains(err.Error(), "member-b") {
 		t.Fatalf("Reconcile() error = %v, want actionable retryable member-b error", err)
 	}
+
 	if result.Ready {
 		t.Fatal("Reconcile().Ready = true after partial failure")
 	}
 	if !contains(clients.operations, "origin:upsert") {
 		t.Errorf("operations = %#v, want successful origin work before partial failure", clients.operations)
+	}
+}
+
+func TestReconcile_RetriesTerminalFailedResource(t *testing.T) {
+	clients := newFakeClients()
+	provider := NewProvider("sub", "afd-rg", clients)
+	desired := testGateway()
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatalf("Reconcile(create) error = %v", err)
+	}
+	for key, resource := range clients.resources {
+		resource.ProvisioningState = ProvisioningStateSucceeded
+		clients.resources[key] = resource
+	}
+	originKey := resourceKey(ResourceOrigin, desired.Routes[0].Backends[0].Origins[0].Name)
+	failed := clients.resources[originKey]
+	failed.ProvisioningState = "Failed"
+	clients.resources[originKey] = failed
+	clients.operations = nil
+
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatalf("Reconcile(retry failed origin) error = %v", err)
+	}
+	if !contains(clients.operations, "origin:upsert") {
+		t.Errorf("operations = %#v, want failed origin upsert retry", clients.operations)
 	}
 }
 

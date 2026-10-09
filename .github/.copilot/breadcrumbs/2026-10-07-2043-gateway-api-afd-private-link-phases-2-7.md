@@ -139,6 +139,12 @@ AFD linked authorization requires the hub identity to read each member PLS. Stag
 built-in `Reader` on the two exact discovered PLS resource IDs before applying Gateway resources.
 HTTPRoute parent conditions also use `meta.SetStatusCondition` to satisfy required transition
 timestamps.
+Azure activity logs showed AFD managed private endpoints originate from a Microsoft-managed
+subscription, not the test subscription. Phase 7 PLS visibility is `"*"` so AFD can discover the
+service; automatic approval stays disabled. The optional requester-subscription allowlist is empty
+for the POC unless the actual managed subscription is explicitly trusted, while exact assignment
+UID/token/message/PLS checks remain mandatory. Provider reconciliation retries origins in terminal
+`Failed` provisioning state after the underlying visibility issue is corrected.
 The fixed hub image initially remained Pending during rolling update because the one-node hub was
 at 97% requested CPU. Phase 7 renders a 25m hub controller request, matching the existing reduced
 member validation requests, so old and new replicas can overlap during rollout.

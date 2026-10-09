@@ -224,10 +224,17 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 			}
 			if equalDesired(current, item.value) {
 				if current.ProvisioningState != ProvisioningStateSucceeded {
-					result.Ready = false
-					result.Pending = append(result.Pending, fmt.Sprintf("%s/%s", item.kind, item.value.Name))
+					if strings.EqualFold(string(current.ProvisioningState), "Failed") {
+						// Retry terminal failures after dependencies or permissions are corrected.
+					} else {
+						result.Ready = false
+						result.Pending = append(result.Pending, fmt.Sprintf("%s/%s", item.kind, item.value.Name))
+						continue
+					}
 				}
-				continue
+				if current.ProvisioningState == ProvisioningStateSucceeded {
+					continue
+				}
 			}
 		}
 		updated, updateErr := p.clients.Upsert(ctx, item.kind, item.parent, item.value)

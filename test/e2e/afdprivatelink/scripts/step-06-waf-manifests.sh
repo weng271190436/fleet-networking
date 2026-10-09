@@ -111,7 +111,6 @@ render_member() {
         --set tlsClientInsecure=false --set-string azure.clientid="${client_id}" \
         --set azure.workloadIdentityEnabled=false --set enableTrafficManagerFeature=false \
         --set enableAFDPrivateLinkFeature=true \
-        --set-string afdRequesterSubscriptionAllowlist="${EXPECTED_SUBSCRIPTION_ID}" \
         --set-string azureCloudConfig.tenantId="${tenant_id}" \
         --set-string azureCloudConfig.subscriptionId="${EXPECTED_SUBSCRIPTION_ID}" \
         --set-string azureCloudConfig.aadClientId="${client_id}" \
@@ -157,7 +156,7 @@ metadata:
     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
     service.beta.kubernetes.io/azure-pls-create: "true"
     service.beta.kubernetes.io/azure-pls-ip-configuration-subnet: "${pls_subnet}"
-    service.beta.kubernetes.io/azure-pls-visibility: "${EXPECTED_SUBSCRIPTION_ID}"
+    service.beta.kubernetes.io/azure-pls-visibility: "*"
 spec:
   type: LoadBalancer
   selector: {app: echo}
