@@ -57,7 +57,7 @@ fi
 umask 077
 jq -cn \
     --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg label "${label}" \
+    --arg evidenceLabel "${label}" \
     --argjson members "${members}" \
     --argjson gateways "${gateways}" \
     --argjson backends "${backends}" \
@@ -68,7 +68,7 @@ jq -cn \
     --argjson member1Resources "${member1_resources}" \
     --argjson member2Resources "${member2_resources}" \
     --argjson http "${http_evidence}" \
-    '{time: $time, label: $label, members: $members, gateways: $gateways, backends: $backends,
+    '{time: $time, label: $evidenceLabel, members: $members, gateways: $gateways, backends: $backends,
       assignments: $assignments, services: {member1: $member1Service, member2: $member2Service},
       azure: {primary: $primaryResources, member1NodeRG: $member1Resources, member2NodeRG: $member2Resources},
       http: $http}' >>"${AFD_PLS_E2E_RESULTS_FILE}"

@@ -123,6 +123,8 @@ The retained Stage 07 reached healthy controllers and applied Gateway resources,
 `nounset` because one `local` declaration expanded `member_name` before assignment. Join helpers
 must assign dependent locals on separate lines, and final role-assignment inventory must disable
 Microsoft Graph principal-name enrichment.
+The first setup-complete evidence snapshot exposed jq's reserved `label` keyword; evidence JSON
+uses a non-keyword argument name while retaining the output field name `label`.
 
 ### Phase 7 retained-run hardening
 
