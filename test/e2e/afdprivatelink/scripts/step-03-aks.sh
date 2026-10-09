@@ -37,6 +37,8 @@ validate_cluster() {
         "$(jq -r '.location' <<<"${json}")" == "${AFD_PLS_E2E_LOCATION}" &&
         "$(jq -r '.nodeResourceGroup' <<<"${json}")" == "${node_rg}" &&
         "$(jq -r '.networkProfile.loadBalancerSku' <<<"${json}")" == "standard" &&
+        "$(jq -r '.aadProfile.managed' <<<"${json}")" == "true" &&
+        "$(jq -r '.aadProfile.enableAzureRbac' <<<"${json}")" == "true" &&
         "$(jq -r '.oidcIssuerProfile.enabled' <<<"${json}")" == "true" &&
         "$(jq -r '.workloadIdentityProfile.enabled' <<<"${json}")" == "true" ]] || {
         echo "error: existing AKS cluster ${cluster} does not match RG/node RG/LB/workload identity plan" >&2
@@ -65,6 +67,16 @@ for spec in "${cluster_specs[@]}"; do
         --vnet-name "${AFD_PLS_E2E_VNET}" --name "${subnet}" --output none
     if az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" --name "${cluster}" \
         --output none 2>/dev/null; then
+        existing_json="$(az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
+            --name "${cluster}" -o json)"
+        validate_resource_tags "$(jq -r '.tags.source // ""' <<<"${existing_json}")" \
+            "$(jq -r '.tags["run-id"] // ""' <<<"${existing_json}")" "AKS cluster ${cluster}"
+        if [[ "$(jq -r '.aadProfile.managed // false' <<<"${existing_json}")" != "true" ||
+            "$(jq -r '.aadProfile.enableAzureRbac // false' <<<"${existing_json}")" != "true" ]]; then
+            echo "enabling Microsoft Entra integration and Azure RBAC on ${cluster}"
+            az aks update --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" --name "${cluster}" \
+                --enable-aad --enable-azure-rbac --output none
+        fi
         validate_cluster "${cluster}" "${subnet}" "${node_rg}"
         az group show --name "${node_rg}" --output none 2>/dev/null || {
             echo "error: existing AKS cluster ${cluster} node resource group ${node_rg} is missing" >&2
@@ -89,7 +101,8 @@ for spec in "${cluster_specs[@]}"; do
         az aks create --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" --name "${cluster}" \
             --location "${AFD_PLS_E2E_LOCATION}" --node-count 1 --node-vm-size Standard_D2as_v4 \
             --network-plugin azure --load-balancer-sku standard --vnet-subnet-id "${subnet_id}" \
-            --enable-managed-identity --enable-oidc-issuer --enable-workload-identity \
+            --enable-managed-identity --enable-aad --enable-azure-rbac \
+            --enable-oidc-issuer --enable-workload-identity \
             --attach-acr "${AFD_PLS_E2E_ACR}" --node-resource-group "${node_rg}" \
             --generate-ssh-keys --tags "${tags[@]}" --output none
     fi

@@ -390,6 +390,8 @@ validate_cluster() {
   test "$(jq -r '.location' <<<"$json")" = "$AFD_PLS_E2E_LOCATION"
   test "$(jq -r '.nodeResourceGroup' <<<"$json")" = "$node_rg"
   test "$(jq -r '.networkProfile.loadBalancerSku' <<<"$json")" = standard
+  test "$(jq -r '.aadProfile.managed' <<<"$json")" = true
+  test "$(jq -r '.aadProfile.enableAzureRbac' <<<"$json")" = true
   test "$(jq -r '.oidcIssuerProfile.enabled' <<<"$json")" = true
   test "$(jq -r '.workloadIdentityProfile.enabled' <<<"$json")" = true
   test "$(az aks nodepool show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
@@ -424,11 +426,21 @@ Expected: each retained cluster validates exactly; missing clusters are named.
 test "$AFD_PLS_E2E_APPROVED" = true
 for spec in "${cluster_specs[@]}"; do
   cluster="${spec%%:*}"; rest="${spec#*:}"; subnet="${rest%%:*}"; node_rg="${rest#*:}"
-  if ! az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" --output none 2>/dev/null; then
+  if existing_json="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" -o json 2>/dev/null)"; then
+    validate_resource_tags "$(jq -r '.tags.source // ""' <<<"$existing_json")" \
+      "$(jq -r '.tags["run-id"] // ""' <<<"$existing_json")" "AKS $cluster"
+    if [[ "$(jq -r '.aadProfile.managed // false' <<<"$existing_json")" != true ||
+          "$(jq -r '.aadProfile.enableAzureRbac // false' <<<"$existing_json")" != true ]]; then
+      echo "Enabling Microsoft Entra integration and Azure RBAC on retained cluster $cluster"
+      az aks update -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" \
+        --enable-aad --enable-azure-rbac --output none
+    fi
+  else
     az aks create -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" \
       --location "$AFD_PLS_E2E_LOCATION" --node-count 1 --node-vm-size Standard_D2as_v4 \
       --network-plugin azure --load-balancer-sku standard \
       --vnet-subnet-id "${vnet_id}/subnets/${subnet}" --enable-managed-identity \
+      --enable-aad --enable-azure-rbac \
       --enable-oidc-issuer --enable-workload-identity --attach-acr "$AFD_PLS_E2E_ACR" \
       --node-resource-group "$node_rg" --generate-ssh-keys --tags "${tags[@]}" --output none
   fi

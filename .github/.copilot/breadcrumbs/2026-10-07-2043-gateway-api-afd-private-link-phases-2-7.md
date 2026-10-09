@@ -109,6 +109,10 @@ Live controller logs also showed that Fleet v0.14.0 cloud-config validation requ
 `refresh-token:v0.1.0` rejects `--workloadIdentityEnabled`. Phase 7 therefore follows the existing
 E2E auth pattern exactly: hub uses federated identity with the compatibility managed-identity flag,
 while member controllers and refresh-token use each AKS kubelet managed identity through IMDS.
+The retained member token was then rejected as `Unauthorized` because Phase 7 AKS clusters lacked
+Microsoft Entra integration. The existing repository bootstrap creates clusters with
+`--enable-aad --enable-azure-rbac`; Phase 7 cluster creation/validation and retained-run recovery
+must enforce the same authentication mode before networking-agent join.
 Controller Deployment pod templates include a checksum of their Azure cloud-config Secret so a
 corrected authentication configuration triggers a new ReplicaSet instead of relying on a
 CrashLoop restart or delayed projected-volume refresh.
