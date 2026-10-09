@@ -125,7 +125,7 @@ One run creates:
 - Basic ACR `fleetp7${AFD_PLS_E2E_RUN_ID//-/}d712`;
 - four image repositories/builds: hub Gateway controller, member controller, CRD installer, echo;
 - three controller user-assigned identities/federated credentials, three AKS control-plane
-  identities, three AKS kubelet identities, three built-in RG-scoped assignments, and three
+  identities, three AKS kubelet identities, five built-in resource-scoped assignments, and three
   AKS-created AcrPull assignments;
 - three one-node `Standard_D2as_v4` workload-identity-enabled AKS clusters;
 - three tagged AKS node RGs, one VNet, three AKS subnets, and two PLS NAT subnets;
@@ -453,14 +453,53 @@ for spec in "${cluster_specs[@]}"; do
 done
 ```
 
+AKS can report `Running` even when a development-subscription policy has deallocated the
+underlying VMSS. Inspect and start only deallocated run-scoped VMSS instances:
+
+```bash
+for node_rg in \
+  "$AFD_PLS_E2E_HUB_NODE_RESOURCE_GROUP" \
+  "$AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP" \
+  "$AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP"; do
+  vmss="$(az vmss list -g "$node_rg" --query '[0].name' -o tsv)"
+  test -n "$vmss" || { echo "ERROR: no VMSS found in $node_rg"; continue; }
+  power="$(az vmss list-instances -g "$node_rg" -n "$vmss" --expand instanceView \
+    --query '[0].instanceView.statuses[?starts_with(code, `PowerState/`)].code | [0]' -o tsv)"
+  echo "$node_rg/$vmss: $power"
+  if [[ "$power" != PowerState/running ]]; then
+    test "$AFD_PLS_E2E_APPROVED" = true
+    echo "Starting $node_rg/$vmss"
+    az vmss start -g "$node_rg" -n "$vmss" --no-wait
+    for _ in $(seq 1 60); do
+      power="$(az vmss list-instances -g "$node_rg" -n "$vmss" --expand instanceView \
+        --query '[0].instanceView.statuses[?starts_with(code, `PowerState/`)].code | [0]' -o tsv)"
+      [[ "$power" == PowerState/running ]] && break
+      sleep 15
+    done
+    [[ "$power" == PowerState/running ]] ||
+      echo "ERROR: $node_rg/$vmss did not reach running state"
+  fi
+done
+```
+
 **READ ONLY — verify before Stage 04:**
 
 ```bash
 az aks list -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   --query '[].{name:name,nodeResourceGroup:nodeResourceGroup,power:powerState.code}' -o table
+for node_rg in \
+  "$AFD_PLS_E2E_HUB_NODE_RESOURCE_GROUP" \
+  "$AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP" \
+  "$AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP"; do
+  vmss="$(az vmss list -g "$node_rg" --query '[0].name' -o tsv)"
+  az vmss list-instances -g "$node_rg" -n "$vmss" --expand instanceView \
+    --query '[].{name:name,power:instanceView.statuses[?starts_with(code, `PowerState/`)].displayStatus|[0]}' \
+    -o table
+done
 ```
 
-Expected: exactly the hub and two members are `Running` with their deterministic node RGs.
+Expected: exactly the hub and two members are `Running`, and every VMSS instance is
+`VM running`.
 
 ### 6.4 Stage 04 — identities, federations, scoped RBAC, and contexts
 
@@ -542,10 +581,17 @@ member_1_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
 member_2_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
+member_1_aks_principal_id="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "$AFD_PLS_E2E_MEMBER1_CLUSTER" --query identity.principalId -o tsv)"
+member_2_aks_principal_id="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "$AFD_PLS_E2E_MEMBER2_CLUSTER" --query identity.principalId -o tsv)"
+vnet_id="$(az network vnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "$AFD_PLS_E2E_VNET" --query id -o tsv)"
 
 for required_name in \
   hub_role_id member_role_id hub_gateway_principal_id \
-  member_1_principal_id member_2_principal_id; do
+  member_1_principal_id member_2_principal_id \
+  member_1_aks_principal_id member_2_aks_principal_id vnet_id; do
   if [[ -z "${!required_name:-}" ]]; then
     echo "ERROR: ${required_name} is empty. Stop before role-assignment commands." >&2
   else
@@ -626,10 +672,23 @@ if ! ensure_assignment "$member_2_principal_id" "$member_role_id" \
     member-2-pls; then
   echo "STOP: Fix member-2-pls above before continuing."
 fi
+if ! ensure_assignment "$member_1_aks_principal_id" "$member_role_id" "$vnet_id" \
+    member-1-aks-vnet; then
+  echo "STOP: Fix member-1-aks-vnet above before continuing."
+fi
+if ! ensure_assignment "$member_2_aks_principal_id" "$member_role_id" "$vnet_id" \
+    member-2-aks-vnet; then
+  echo "STOP: Fix member-2-aks-vnet above before continuing."
+fi
 ```
 
 Each invocation prints either `Reusing`, `Creating`, or a complete `ERROR` message and returns to
-your prompt. Do not continue to kubeconfig commands unless all three print `Recorded`.
+your prompt. Do not continue to kubeconfig commands unless all five print `Recorded`.
+
+The two `member-*-aks-vnet` assignments grant each member AKS cloud-provider identity
+`Network Contributor` on the exact test VNet. This is required for internal load balancer and PLS
+reconciliation because the PLS NAT subnets live in the primary resource group rather than the AKS
+node resource groups.
 
 `--fill-principal-name false` is required in this environment. It prevents Azure CLI from querying
 Microsoft Graph, which is blocked by the organization's conditional-access token protection policy
@@ -670,7 +729,7 @@ kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts
 jq '.identities,.roleAssignments' "$AFD_PLS_E2E_STATE_FILE"
 ```
 
-Expected: all three exact contexts, controller identities, and three scoped assignments appear.
+Expected: all three exact contexts, controller identities, and five scoped assignments appear.
 
 ### 6.5 Stage 05 — pinned CRDs and Fleet registration
 
@@ -979,9 +1038,23 @@ for manifest in "$AFD_PLS_E2E_HUB_MANIFEST" "$AFD_PLS_E2E_MEMBER1_MANIFEST" \
   "$AFD_PLS_E2E_MEMBER2_MANIFEST"; do test -s "$manifest"; done
 k "$AFD_PLS_E2E_HUB_CONTEXT" get membercluster "$AFD_PLS_E2E_MEMBER1_CLUSTER"
 k "$AFD_PLS_E2E_HUB_CONTEXT" get membercluster "$AFD_PLS_E2E_MEMBER2_CLUSTER"
+for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
+  "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
+  echo "=== $context nodes ==="
+  k "$context" get nodes
+  test "$(k "$context" get nodes -o json |
+    jq '[.items[].status.conditions[] | select(.type == "Ready" and .status == "True")] | length')" -ge 1 ||
+    echo "STOP: $context has no Ready node; return to the VMSS recovery in Section 6.3."
+done
+test "$(k "$AFD_PLS_E2E_HUB_CONTEXT" -n kube-system get endpoints \
+  azure-wi-webhook-webhook-service -o json |
+  jq '[.subsets[]?.addresses[]?] | length')" -ge 1 ||
+  echo "STOP: hub Azure Workload Identity webhook has no endpoint; wait for the hub node and webhook."
 ```
 
-Expected: manifests exist and both MemberClusters are readable.
+Expected: manifests exist, both MemberClusters are readable, every cluster has a Ready node, and
+the hub Workload Identity webhook has at least one endpoint. Do not apply deployments while any
+`STOP` message is printed.
 
 **MUTATING — apply manifests and explicitly wait before creating IMCs:**
 

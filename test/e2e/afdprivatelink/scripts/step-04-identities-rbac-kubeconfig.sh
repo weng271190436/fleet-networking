@@ -129,6 +129,14 @@ ensure_assignment "${member_1_principal_id}" "${member_role_id}" \
     "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" member-1-pls
 ensure_assignment "${member_2_principal_id}" "${member_role_id}" \
     "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" member-2-pls
+vnet_id="$(az network vnet show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
+    --name "${AFD_PLS_E2E_VNET}" --query id -o tsv)"
+member_1_aks_principal_id="$(az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
+    --name "${AFD_PLS_E2E_MEMBER1_CLUSTER}" --query identity.principalId -o tsv)"
+member_2_aks_principal_id="$(az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
+    --name "${AFD_PLS_E2E_MEMBER2_CLUSTER}" --query identity.principalId -o tsv)"
+ensure_assignment "${member_1_aks_principal_id}" "${member_role_id}" "${vnet_id}" member-1-aks-vnet
+ensure_assignment "${member_2_aks_principal_id}" "${member_role_id}" "${vnet_id}" member-2-aks-vnet
 
 for context_spec in \
     "${AFD_PLS_E2E_HUB_CLUSTER}:${AFD_PLS_E2E_HUB_CONTEXT}" \

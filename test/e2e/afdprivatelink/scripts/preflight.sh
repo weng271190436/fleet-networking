@@ -182,7 +182,7 @@ Billable plan:
     net-crd-installer, afd-pls-echo; setup records immutable digests and deploys only @sha256 refs
   - user-assigned managed identities (3) and federated credentials (3)
   - AKS-managed control-plane identities (3) and kubelet identities (3)
-  - built-in RG-scoped role assignments (3) and AKS-created AcrPull assignments (3)
+  - built-in resource-scoped role assignments (5) and AKS-created AcrPull assignments (3)
   - AKS clusters (3): ${AFD_PLS_E2E_HUB_CLUSTER}, ${AFD_PLS_E2E_MEMBER1_CLUSTER}, ${AFD_PLS_E2E_MEMBER2_CLUSTER}
   - AKS nodes (3 total): one Standard_D2as_v4 node per cluster
   - deterministic AKS node resource groups (3):

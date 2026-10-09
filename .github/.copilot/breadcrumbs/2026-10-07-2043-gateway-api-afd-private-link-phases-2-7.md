@@ -99,6 +99,11 @@ than depending on variables populated by an earlier optional inspection block.
 Kubeconfig refresh must be idempotent: when Azure CLI recreates a `*-admin` context and the
 normalized context already exists, delete only the duplicate `*-admin` context instead of failing
 to rename over the retained normalized context.
+Live validation found AKS reporting `Running` while all three underlying VMSS instances were
+deallocated and nodes carried shutdown/out-of-service taints. The manual workflow must verify VMSS
+power and node readiness before deployment, expose an explicit VMSS start recovery, and grant each
+member AKS control-plane identity `Network Contributor` on the exact test VNet so cloud provider
+can read PLS subnets.
 
 #### Phase 1: Authoritative operator workflow
 
@@ -741,7 +746,7 @@ The approved preparation work is to make the harness self-contained without runn
   reported 0/10000 regional vCPUs and 0/100 DSv3-family vCPUs in use.
 - The printed plan used run ID `p7-20261008`, primary resource group
   `fleet-afd-pls-p7-20261008`, Basic ACR `fleetp7p720261008d712`, four image repositories, three
-  controller identities/federations, AKS-managed identities, three RG-scoped built-in role assignments, three one-node
+  controller identities/federations, AKS-managed identities, five resource-scoped built-in role assignments, three one-node
   `Standard_D2as_v4` clusters, one VNet, two ILBs, two PLS resources, one AFD Premium graph, and one
   WAF policy. No provisioning, image publication, Kubernetes mutation, live validation, or cleanup
   ran.

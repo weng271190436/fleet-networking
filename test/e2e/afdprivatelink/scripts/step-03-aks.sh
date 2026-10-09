@@ -114,6 +114,29 @@ for spec in "${cluster_specs[@]}"; do
         fi
         record_resource nodeResourceGroup "${node_rg}" \
             "$(az group show --name "${node_rg}" --query id -o tsv)"
+        vmss="$(az vmss list --resource-group "${node_rg}" --query '[0].name' -o tsv)"
+        [[ -n "${vmss}" ]] || {
+            echo "error: node resource group ${node_rg} contains no VMSS" >&2
+            exit 1
+        }
+        power="$(az vmss list-instances --resource-group "${node_rg}" --name "${vmss}" \
+            --expand instanceView \
+            --query '[0].instanceView.statuses[?starts_with(code, `PowerState/`)].code | [0]' -o tsv)"
+        if [[ "${power}" != "PowerState/running" ]]; then
+            echo "starting deallocated VMSS ${node_rg}/${vmss}"
+            az vmss start --resource-group "${node_rg}" --name "${vmss}" --no-wait
+            for _ in $(seq 1 60); do
+                power="$(az vmss list-instances --resource-group "${node_rg}" --name "${vmss}" \
+                    --expand instanceView \
+                    --query '[0].instanceView.statuses[?starts_with(code, `PowerState/`)].code | [0]' -o tsv)"
+                [[ "${power}" == "PowerState/running" ]] && break
+                sleep 15
+            done
+            [[ "${power}" == "PowerState/running" ]] || {
+                echo "error: VMSS ${node_rg}/${vmss} did not reach running state" >&2
+                exit 1
+            }
+        fi
     fi
 done
 

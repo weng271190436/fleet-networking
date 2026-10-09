@@ -33,6 +33,22 @@ for member in "${AFD_PLS_E2E_MEMBER1_CLUSTER}" "${AFD_PLS_E2E_MEMBER2_CLUSTER}";
         exit 1
     }
 done
+for context in "${AFD_PLS_E2E_HUB_CONTEXT}" "${AFD_PLS_E2E_MEMBER1_CONTEXT}" \
+    "${AFD_PLS_E2E_MEMBER2_CONTEXT}"; do
+    ready_nodes="$(k "${context}" get nodes -o json |
+        jq '[.items[].status.conditions[] | select(.type == "Ready" and .status == "True")] | length')"
+    [[ "${ready_nodes}" -ge 1 ]] || {
+        echo "error: ${context} has no Ready node; rerun the VMSS recovery in step 03" >&2
+        exit 1
+    }
+done
+webhook_endpoints="$(k "${AFD_PLS_E2E_HUB_CONTEXT}" -n kube-system get endpoints \
+    azure-wi-webhook-webhook-service -o json |
+    jq '[.subsets[]?.addresses[]?] | length')"
+[[ "${webhook_endpoints}" -ge 1 ]] || {
+    echo "error: hub Azure Workload Identity webhook has no endpoint" >&2
+    exit 1
+}
 
 k "${AFD_PLS_E2E_HUB_CONTEXT}" apply --server-side --field-manager=phase7-e2e \
     -f "${AFD_PLS_E2E_HUB_MANIFEST}"
