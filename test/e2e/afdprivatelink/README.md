@@ -1488,10 +1488,33 @@ make phase7-e2e-evidence EVIDENCE_LABEL=before-gateway-delete
 ```bash
 test "${AFD_PLS_E2E_APPROVED:-}" = true
 kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" --context "$AFD_PLS_E2E_HUB_CONTEXT" \
-  -n afd-pls-e2e delete gateway/global --wait=true --timeout=20m
+  -n afd-pls-e2e delete gateway/global --wait=false
 ```
 
-Expected: `gateway.gateway.networking.k8s.io "global" deleted`.
+`gateway ... deleted from ...` means the delete request was accepted; the object remains behind
+its cleanup finalizer while Azure deletes the profile. Monitor both sides with visible progress:
+
+```bash
+for attempt in $(seq 1 90); do
+  gateway_json="$(kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" \
+    --context "$AFD_PLS_E2E_HUB_CONTEXT" -n afd-pls-e2e \
+    get gateway/global -o json 2>/dev/null || true)"
+  profile_state="$(az afd profile show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    -n "$profile_name" --query resourceState -o tsv 2>/dev/null || true)"
+  if [[ -n "$gateway_json" ]]; then
+    finalizers="$(jq -c '.metadata.finalizers // []' <<<"$gateway_json")"
+    echo "attempt=$attempt Gateway=terminating finalizers=$finalizers AFD=${profile_state:-absent}"
+  else
+    echo "attempt=$attempt Gateway=absent AFD=${profile_state:-absent}"
+  fi
+  [[ -z "$gateway_json" && -z "$profile_state" ]] && break
+  sleep 30
+done
+```
+
+Expected progression: AFD reports `Deleting`, then becomes absent; the controller removes
+`networking.fleet.azure.com/afd-gateway-cleanup`; finally the Gateway becomes absent. This can take
+many minutes.
 
 **READ ONLY — wait for and verify ownership boundaries:**
 

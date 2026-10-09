@@ -188,6 +188,9 @@ cleanup. The hardening pass will:
 - Evidence was appended to the ignored run-local results file with label `user-scenario-ready`.
 - Label withdrawal, fail-static outage, Gateway deletion ownership, and final cleanup remain for
   the human operator; Phase 7 is still incomplete.
+- Gateway deletion is Azure-asynchronous. The runbook submits a nonblocking Kubernetes delete and
+  prints Gateway finalizer and AFD profile state until both are absent, rather than appearing stuck
+  inside a silent `kubectl delete --wait=true`.
 
 #### Phase 1: Authoritative operator workflow
 
