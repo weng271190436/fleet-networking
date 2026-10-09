@@ -248,6 +248,7 @@ func TestReconcileObservesAlreadyApprovedConnection(t *testing.T) {
 			testConnection("expected", "Approved", testRequestMessage, testManagedPrivateEndpointID),
 		},
 	}
+
 	reconciler := readyApprovalReconciler(hubClient, memberClient, connections)
 
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -257,6 +258,42 @@ func TestReconcileObservesAlreadyApprovedConnection(t *testing.T) {
 	}
 	if len(connections.approvedNames) != 0 {
 		t.Fatalf("approved connections = %#v, want no update", connections.approvedNames)
+	}
+	got := getAssignment(t, hubClient.Client, assignment)
+	assertCondition(t, got.Status.Conditions,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionApproved)
+}
+
+func TestReconcilePreservesApprovedStatusOnTransientReadError(t *testing.T) {
+	assignment := testAssignment()
+	assignment.Status = fleetnetv1alpha1.ServiceOriginAssignmentStatus{
+		ObservedGeneration: assignment.Generation,
+		Origin: &fleetnetv1alpha1.ServiceOriginAssignmentOriginStatus{
+			AzureLocation:        "eastus",
+			LoadBalancerAddress:  testIngressIP,
+			PrivateLinkServiceID: testPLSID,
+		},
+	}
+	setCondition(&assignment.Status, assignment.Generation,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionServiceResolved,
+		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonServiceResolved, "ready")
+	setCondition(&assignment.Status, assignment.Generation,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady,
+		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonInfrastructureReady, "ready")
+	setCondition(&assignment.Status, assignment.Generation,
+		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionApproved, "approved")
+
+	memberClient := newReadyMemberClient(t)
+	hubClient := newCountingHubClient(t, assignment)
+	connections := &fakePrivateEndpointConnectionClient{listErr: errors.New("transient list error")}
+	reconciler := readyApprovalReconciler(hubClient, memberClient, connections)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: assignment.Namespace, Name: assignment.Name},
+	}); err == nil {
+		t.Fatal("Reconcile() error = nil, want transient Azure error")
 	}
 	got := getAssignment(t, hubClient.Client, assignment)
 	assertCondition(t, got.Status.Conditions,

@@ -93,10 +93,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	status := desiredStatus(&assignment)
-	setCondition(&status, assignment.Generation,
-		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
-		metav1.ConditionUnknown, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionPending,
-		"Private Link approval is waiting for current Service and infrastructure validation")
+	if !approvalCurrentTrue(&assignment) {
+		setCondition(&status, assignment.Generation,
+			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
+			metav1.ConditionUnknown, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionPending,
+			"Private Link approval is waiting for current Service and infrastructure validation")
+	}
 	if !assignment.DeletionTimestamp.IsZero() {
 		setCondition(&status, assignment.Generation,
 			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
@@ -408,6 +410,9 @@ func (r *Reconciler) reportApprovalError(
 	assignment *fleetnetv1alpha1.ServiceOriginAssignment,
 	approvalErr error,
 ) error {
+	if approvalCurrentTrue(assignment) {
+		return approvalErr
+	}
 	status := desiredStatus(assignment)
 	setCondition(&status, assignment.Generation,
 		fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
@@ -417,6 +422,19 @@ func (r *Reconciler) reportApprovalError(
 		return errors.Join(approvalErr, err)
 	}
 	return approvalErr
+}
+
+func approvalCurrentTrue(assignment *fleetnetv1alpha1.ServiceOriginAssignment) bool {
+	if assignment.Status.ObservedGeneration != assignment.Generation {
+		return false
+	}
+	condition := meta.FindStatusCondition(
+		assignment.Status.Conditions,
+		string(fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved),
+	)
+	return condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.ObservedGeneration == assignment.Generation
 }
 
 func (r *Reconciler) updateStatus(

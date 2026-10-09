@@ -148,6 +148,10 @@ UID/token/message/PLS checks remain mandatory. Provider reconciliation retries o
 The default cloud-provider client-side rate limiter starved the final member approval GET in this
 low-volume POC while Azure itself was healthy. Phase 7 test cloud configs disable that local
 limiter; Azure SDK retry and service-side throttling remain in effect.
+After Azure approval succeeded, transient follow-up reads caused `PrivateLinkApproved` to flap from
+True to Unknown because reconciliation eagerly wrote Pending/Error. Current-generation approved
+status is fail-static: discovery still refreshes independently, but transient approval reads do not
+downgrade confirmed approval.
 The fixed hub image initially remained Pending during rolling update because the one-node hub was
 at 97% requested CPU. Phase 7 renders a 25m hub controller request, matching the existing reduced
 member validation requests, so old and new replicas can overlap during rollout.
