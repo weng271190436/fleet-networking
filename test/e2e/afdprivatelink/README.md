@@ -1,9 +1,10 @@
 # Phase 7 AFD Private Link human-validation runbook
 
-> **Status: In progress.** The runbook and guarded automation are implemented, but the complete
-> human validation has not passed. Retained run `p7-10082105` stopped during a monolithic rerun
-> when Azure rejected an attempted in-use subnet deletion. Do not interpret this document or its
-> commit as Phase 7 completion.
+> **Status: In progress.** Retained run `p7-10082105` has completed setup, real networking-agent
+> join, two private-origin approval, Gateway programming, two-member HTTP 200 sampling, and the WAF
+> HTTP 403 assertion. Label withdrawal, fail-static outage, Gateway deletion ownership, and final
+> cleanup still require human execution. Do not interpret this document or its commit as complete
+> Phase 7 validation.
 
 This is the standalone runbook for the real-Azure Phase 7 human-run POC validation. Commands marked
 **READ ONLY** do not change Azure or Kubernetes. Commands marked **MUTATING** create, update, or

@@ -175,6 +175,20 @@ cleanup. The hardening pass will:
   in the retained environment; and
 - preserve the environment and diagnostics on any failure.
 
+#### Retained-run validation result
+
+- Retained run `p7-10082105` completed all seven setup/join stages.
+- Hub and member controllers are Available; both networking agents report joined with heartbeats.
+- Both ILB/PLS origins were discovered and exact token-correlated AFD managed connections were
+  approved.
+- AFD profile, endpoint, origin group, two private origins, route, and WAF security policy are
+  provisioned; Gateway reports `Programmed=True`.
+- Repeated HTTPS requests returned HTTP 200 and observed both `member-1` and `member-2`.
+- `X-POC-Block: true` returned HTTP 403 from the WAF.
+- Evidence was appended to the ignored run-local results file with label `user-scenario-ready`.
+- Label withdrawal, fail-static outage, Gateway deletion ownership, and final cleanup remain for
+  the human operator; Phase 7 is still incomplete.
+
 #### Phase 1: Authoritative operator workflow
 
 - [x] **Task L1.1: Replace Section 6 with seven literal command stages.**
