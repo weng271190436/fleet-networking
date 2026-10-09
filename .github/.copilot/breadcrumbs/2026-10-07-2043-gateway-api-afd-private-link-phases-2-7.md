@@ -1245,3 +1245,92 @@ Read-only post-cleanup verification returned `false` for:
 The generated kubeconfig, state JSON, and artifact directory are absent. The run-scoped JSONL
 evidence file remains. Cleanup is complete, but Phase 7 must not be declared complete until the
 outstanding fail-static lifecycle assertion is resolved.
+
+## Fresh Part 1 validation run
+
+On 2026-10-09 the user requested a new real-Azure execution of Part 1, including fixes and resumed
+validation if any documented step fails. The proposed run ID is `p7-10092240` in the already
+approved `AKS Fleet Development/Test` subscription and `eastus2`.
+
+### Phase 1: Preflight and mutation boundary
+
+- [x] **Task N1.1: Run the read-only preflight for the fresh run.**
+  - Verify Azure authentication, subscription, providers, quota, deterministic-name availability,
+    repository branch/ancestry, build inputs, Helm renders, and cleanup boundary.
+  - Success criteria: preflight passes without creating Azure or Kubernetes resources.
+- [x] **Task N1.2: Confirm the Part 1-only execution boundary.**
+  - Execute registry/images, network, AKS, identities/RBAC/kubeconfig, CRDs/registration, and
+    controller deployment/join only.
+  - Success criteria: do not create echo Deployments/Services, WAF, MultiClusterBackend, Gateway,
+    HTTPRoute, AFD profile, or PLS resources.
+
+### Phase 2: Execute Part 1 incrementally
+
+- [x] **Task N2.1: Create the registry and publish immutable images.**
+  - Success criteria: the run-scoped Basic ACR exists and all five state references are
+    digest-pinned.
+- [x] **Task N2.2: Create networking and AKS infrastructure.**
+  - Success criteria: exact tagged VNet/subnets and three healthy one-node AKS clusters exist.
+- [x] **Task N2.3: Create identities, RBAC, and kubeconfig.**
+  - Include the two new member-node-RG `Reader` grants for the hub controller.
+  - Success criteria: seven recorded built-in assignments and three working contexts.
+- [x] **Task N2.4: Install CRDs, register members, and deploy controllers.**
+  - Follow the Part 1 literal boundary rather than legacy Stage 06/07 combined automation.
+  - Success criteria: controllers are Available, networking-agent heartbeats are current, and both
+    MemberClusters are `Joined=True`.
+
+### Phase 3: Validate, repair, and document
+
+- [x] **Task N3.1: Verify the Part 1 exit criteria.**
+  - Verify CRDs, `GatewayClass`, immutable controller images, cluster/node health, identities, and
+    the absence of application, WAF, AFD, and Gateway resources.
+  - Success criteria: Part 2 can start by changing only the run ID.
+- [x] **Task N3.2: Diagnose and fix any failures surgically.**
+  - Preserve resources on failure, collect bounded diagnostics, modify only the responsible
+    implementation/docs, run static checks, and resume at the failed stage.
+  - Success criteria: no broad cleanup/reprovision loop is used to mask a deterministic defect.
+- [x] **Task N3.3: Update the breadcrumb with commands, fixes, and final state.**
+  - Success criteria: the new run and any remaining billable resources are explicit.
+
+### Fresh-run success criteria
+
+- [x] Part 1 completes from a clean run ID in real Azure.
+- [x] The hub and both member controllers are Available.
+- [x] Both member networking agents have joined the hub.
+- [x] The hub identity has the documented primary-RG Contributor and member-node-RG Reader access.
+- [x] No Part 2 application, WAF, AFD, Gateway, or PLS resources exist.
+- [x] The run remains ready for the customer Part 2 quickstart or explicit bounded cleanup.
+
+### Fresh-run AKS validator correction
+
+The first Stage 03 attempt created the hub cluster successfully, then preserved the environment
+when post-create validation failed. Current Azure CLI/`aks-preview` output reports workload
+identity at `.securityProfile.workloadIdentity.enabled`; the runbook and stage script still read
+the older `.workloadIdentityProfile.enabled` path. The validator now accepts the current path with
+the legacy path as a compatibility fallback. No AKS topology or security requirement changed.
+
+### Fresh Part 1 run result
+
+- Read-only preflight passed for `p7-10092240` in `eastus2` with sufficient regional and DASv4
+  quota, no conflicting deterministic names, and zero existing AFD profiles.
+- Stage 01 created Basic ACR `fleetp7p710092240d712`, published the four repository images, and
+  recorded five digest-pinned references.
+- Stage 02 created the exact tagged VNet and five subnets.
+- The initial Stage 03 attempt created the hub AKS cluster and then failed closed on the obsolete
+  workload-identity JSON path. The environment was preserved. After the compatibility fix passed
+  against the live hub response, rerunning only Stage 03 reused the hub and created both members.
+- Stage 04 created the hub identity/federation, three working run-scoped kubeconfig contexts, and
+  seven recorded assignments. The hub has Contributor on the primary RG and Reader on both member
+  node RGs; member identities retain their documented node-RG/VNet grants.
+- Stage 05 installed the pinned Fleet and Gateway API CRDs, registration namespaces/RBAC, and two
+  MemberClusters.
+- The Part 1 literal controller boundary rendered and applied only controller objects. The hub and
+  both member Deployments reached Available, and both networking CRDs became Established.
+- Both InternalMemberClusters reported current `ServiceExportImportAgent` heartbeats with
+  `Joined=True`; both aggregate MemberClusters were patched `Joined=True`.
+- `GatewayClass/azure-fleet-afd` reports `Accepted=True`.
+- All three clusters have one Ready node, and all relevant init/container images are digest-pinned.
+- Exit checks found zero application Services in `afd-pls-e2e`, zero PLS resources, zero WAF
+  policies, zero AFD profiles, zero Gateways, and zero MultiClusterBackends.
+- The environment remains active and billable. Part 2 can start with only
+  `AFD_PLS_E2E_RUN_ID=p7-10092240`; otherwise Part 4 can remove the exact run.

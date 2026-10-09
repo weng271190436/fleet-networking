@@ -40,7 +40,8 @@ validate_cluster() {
         "$(jq -r '.aadProfile.managed' <<<"${json}")" == "true" &&
         "$(jq -r '.aadProfile.enableAzureRbac' <<<"${json}")" == "true" &&
         "$(jq -r '.oidcIssuerProfile.enabled' <<<"${json}")" == "true" &&
-        "$(jq -r '.workloadIdentityProfile.enabled' <<<"${json}")" == "true" ]] || {
+        "$(jq -r '.securityProfile.workloadIdentity.enabled //
+            .workloadIdentityProfile.enabled // false' <<<"${json}")" == "true" ]] || {
         echo "error: existing AKS cluster ${cluster} does not match RG/node RG/LB/workload identity plan" >&2
         return 1
     }

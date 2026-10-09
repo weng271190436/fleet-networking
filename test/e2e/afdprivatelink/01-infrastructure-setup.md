@@ -3,9 +3,9 @@
 [Previous: cleanup (for retained runs)](04-cleanup.md) ·
 [Next: global Service scenario](02-global-service-scenario.md)
 
-> **Status: Validated.** Retained run `p7-10082105` completed the reusable platform setup and real
-> networking-agent join. Later parts also validated the global Service and Gateway deletion
-> ownership. Final cleanup remains pending, so Phase 7 is not complete.
+> **Status: Validated.** Fresh run `p7-10092240` completed this reusable platform setup and real
+> networking-agent join on 2026-10-09. The environment remains active and ready for Part 2.
+> Phase 7 is not complete because the fail-static lifecycle assertion remains outstanding.
 
 This document builds only the reusable platform for the real-Azure Phase 7 human-run POC. It
 finishes before any echo workload, Service, WAF policy, `MultiClusterBackend`, `Gateway`,
@@ -399,7 +399,8 @@ validate_cluster() {
   test "$(jq -r '.aadProfile.managed' <<<"$json")" = true
   test "$(jq -r '.aadProfile.enableAzureRbac' <<<"$json")" = true
   test "$(jq -r '.oidcIssuerProfile.enabled' <<<"$json")" = true
-  test "$(jq -r '.workloadIdentityProfile.enabled' <<<"$json")" = true
+  test "$(jq -r '.securityProfile.workloadIdentity.enabled //
+    .workloadIdentityProfile.enabled // false' <<<"$json")" = true
   test "$(az aks nodepool show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
     --cluster-name "$cluster" -n nodepool1 --query vmSize -o tsv)" = Standard_D2as_v4
   pool_subnet="$(az aks nodepool show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
