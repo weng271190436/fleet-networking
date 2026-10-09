@@ -145,6 +145,9 @@ service; automatic approval stays disabled. The optional requester-subscription 
 for the POC unless the actual managed subscription is explicitly trusted, while exact assignment
 UID/token/message/PLS checks remain mandatory. Provider reconciliation retries origins in terminal
 `Failed` provisioning state after the underlying visibility issue is corrected.
+The default cloud-provider client-side rate limiter starved the final member approval GET in this
+low-volume POC while Azure itself was healthy. Phase 7 test cloud configs disable that local
+limiter; Azure SDK retry and service-side throttling remain in effect.
 The fixed hub image initially remained Pending during rolling update because the one-node hub was
 at 97% requested CPU. Phase 7 renders a 25m hub controller request, matching the existing reduced
 member validation requests, so old and new replicas can overlap during rollout.

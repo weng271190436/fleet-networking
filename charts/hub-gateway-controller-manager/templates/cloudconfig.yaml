@@ -13,6 +13,7 @@ stringData:
       "aadClientId": {{ .Values.azure.clientId | quote }},
       "useManagedIdentityExtension": true,
       "useFederatedWorkloadIdentityExtension": true,
+      "cloudProviderRateLimit": false,
       "resourceGroup": {{ .Values.azure.resourceGroup | quote }},
       "location": {{ required "azure.location is required" .Values.azure.location | quote }}
     }

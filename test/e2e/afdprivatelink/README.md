@@ -928,6 +928,7 @@ render_member() {
     --set-string azureCloudConfig.aadClientId="$client" \
     --set azureCloudConfig.useManagedIdentityExtension=true \
     --set-string azureCloudConfig.userAssignedIdentityID="$client" \
+    --set azureCloudConfig.cloudProviderRateLimit=false \
     --set-string azureCloudConfig.resourceGroup="$node_rg" \
     --set-string azureCloudConfig.location="$AFD_PLS_E2E_LOCATION" >"$manifest"
 }
