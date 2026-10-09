@@ -94,6 +94,8 @@ change, commit, or push is approved.
 Manual commands must never silently enable `errexit`, `nounset`, or `pipefail` in the operator's
 interactive shell. Shared helpers may be sourced without changing shell options, and failure-prone
 command blocks must print actionable errors and return control for diagnosis.
+Each independently copyable mutation block must also load and validate its own required IDs rather
+than depending on variables populated by an earlier optional inspection block.
 
 #### Phase 1: Authoritative operator workflow
 

@@ -533,9 +533,36 @@ done
 Create missing assignments only at the approved RG scopes:
 
 ```bash
+# Reload prerequisites so this block is safe to run independently in a new shell.
+hub_role_id="$(az role definition list --name Contributor --query '[0].name' -o tsv)"
+member_role_id="$(az role definition list --name 'Network Contributor' --query '[0].name' -o tsv)"
+hub_gateway_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
+member_1_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
+member_2_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
+
+for required_name in \
+  hub_role_id member_role_id hub_gateway_principal_id \
+  member_1_principal_id member_2_principal_id; do
+  if [[ -z "${!required_name:-}" ]]; then
+    echo "ERROR: ${required_name} is empty. Stop before role-assignment commands." >&2
+  else
+    printf '%s=%s\n' "$required_name" "${!required_name}"
+  fi
+done
+
 ensure_assignment() {
   local principal="$1" role_id="$2" scope="$3" logical_name="$4"
   local all_assignments matches count assignment created
+
+  if [[ -z "$principal" || -z "$role_id" || -z "$scope" || -z "$logical_name" ]]; then
+    echo "ERROR: ensure_assignment received an empty argument:" >&2
+    printf '  principal=%q\n  role_id=%q\n  scope=%q\n  logical_name=%q\n' \
+      "$principal" "$role_id" "$scope" "$logical_name" >&2
+    return 1
+  fi
 
   echo "Inspecting ${logical_name} assignment at ${scope}"
   if ! all_assignments="$(az role assignment list --assignee-object-id "$principal" \
