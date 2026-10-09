@@ -10,6 +10,8 @@ spec:
       app: hub-gateway-controller-manager
   template:
     metadata:
+      annotations:
+        checksum/azure-cloud-config: {{ include (print $.Template.BasePath "/cloudconfig.yaml") . | sha256sum }}
       labels:
         app: hub-gateway-controller-manager
         azure.workload.identity/use: "true"

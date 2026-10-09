@@ -109,6 +109,9 @@ Live controller logs also showed that Fleet v0.14.0 cloud-config validation requ
 `refresh-token:v0.1.0` rejects `--workloadIdentityEnabled`. Phase 7 therefore follows the existing
 E2E auth pattern exactly: hub uses federated identity with the compatibility managed-identity flag,
 while member controllers and refresh-token use each AKS kubelet managed identity through IMDS.
+Controller Deployment pod templates include a checksum of their Azure cloud-config Secret so a
+corrected authentication configuration triggers a new ReplicaSet instead of relying on a
+CrashLoop restart or delayed projected-volume refresh.
 
 #### Phase 1: Authoritative operator workflow
 
