@@ -25,6 +25,7 @@ func TestReconcile_CreateUpdateNoOpAndProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile(create) error = %v", err)
 	}
+
 	if result.Ready {
 		t.Fatal("Reconcile(create).Ready = true, want false until Azure provisioning succeeds")
 	}
@@ -59,6 +60,14 @@ func TestReconcile_CreateUpdateNoOpAndProvisioning(t *testing.T) {
 	}
 	if !contains(clients.operations, "originGroup:upsert") {
 		t.Errorf("update operations = %#v, want originGroup:upsert", clients.operations)
+	}
+}
+
+func TestEqualDesired_NormalizesAzureLocationCase(t *testing.T) {
+	current := Resource{Name: "profile", Location: "Global", SKU: "Premium_AzureFrontDoor"}
+	desired := Resource{Name: "profile", Location: "global", SKU: "Premium_AzureFrontDoor"}
+	if !equalDesired(current, desired) {
+		t.Fatalf("equalDesired(%#v, %#v) = false, want true", current, desired)
 	}
 }
 

@@ -152,6 +152,10 @@ After Azure approval succeeded, transient follow-up reads caused `PrivateLinkApp
 True to Unknown because reconciliation eagerly wrote Pending/Error. Current-generation approved
 status is fail-static: discovery still refreshes independently, but transient approval reads do not
 downgrade confirmed approval.
+Provider idempotency compared Azure's canonical `Global` location to desired `global`
+case-sensitively, causing profile/endpoint rewrites every reconcile and perpetual
+`Provider.Ready=false` with no pending resources. Location equality is case-insensitive and
+normalized before desired-state comparison.
 The fixed hub image initially remained Pending during rolling update because the one-node hub was
 at 97% requested CPU. Phase 7 renders a 25m hub controller request, matching the existing reduced
 member validation requests, so old and new replicas can overlap during rollout.

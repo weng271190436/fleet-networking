@@ -420,6 +420,9 @@ func equalDesired(current, desired Resource) bool {
 	current.ID = desired.ID
 	current.ProvisioningState = ""
 	desired.ProvisioningState = ""
+	if strings.EqualFold(current.Location, desired.Location) {
+		current.Location = desired.Location
+	}
 	if desired.PrivateLinkServiceID != "" {
 		current.OriginGroupID = desired.OriginGroupID
 	}
