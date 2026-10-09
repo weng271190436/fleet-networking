@@ -2,7 +2,7 @@
 
 ## Plan status
 
-- **Status:** Phase 7 runbook in progress; live validation incomplete
+- **Status:** Phase 7 operator documents in progress; live validation incomplete
 - **Date:** 2026-10-08
 - **Target repository:** `Azure/fleet-networking`
 - **Development branch:** `poc/gateway-api-afd-private-link`
@@ -789,7 +789,9 @@ Keep unit coverage deliberately narrow for the POC:
    observed ready.
 5. The member approval matcher accepts the expected token and rejects a mismatched token.
 
-Use the guarded real-Azure operator checklist as the primary POC validation. Phase 7 intentionally
+Use the four guarded real-Azure operator documents under `test/e2e/afdprivatelink/` as the primary
+POC validation, in order: `01-infrastructure-setup.md`, `02-global-service-scenario.md`,
+`03-lifecycle-validation.md`, and `04-cleanup.md`. Phase 7 intentionally
 has no Go/Ginkgo runner; keep Azure SDK calls behind interfaces so controller behavior remains
 unit-testable without Azure.
 

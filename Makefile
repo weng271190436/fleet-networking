@@ -164,7 +164,7 @@ phase7-e2e-preflight: ## Validate the Phase 7 Azure plan without mutation.
 	bash test/e2e/afdprivatelink/scripts/preflight.sh
 
 .PHONY: phase7-e2e-setup
-phase7-e2e-setup: ## Optional: run all Phase 7 setup stages; prefer numbered targets for resume/debug.
+phase7-e2e-setup: ## Optional legacy combined setup; operator document boundaries differ.
 	bash test/e2e/afdprivatelink/scripts/setup.sh
 
 .PHONY: phase7-e2e-step-01-registry-images
@@ -188,11 +188,11 @@ phase7-e2e-step-05-crds-registration: ## Apply CRDs, registration resources, and
 	bash test/e2e/afdprivatelink/scripts/step-05-crds-registration.sh
 
 .PHONY: phase7-e2e-step-06-waf-manifests
-phase7-e2e-step-06-waf-manifests: ## Create/validate WAF and render digest-pinned manifests only.
+phase7-e2e-step-06-waf-manifests: ## Legacy combined WAF/controller/application manifest stage.
 	bash test/e2e/afdprivatelink/scripts/step-06-waf-manifests.sh
 
 .PHONY: phase7-e2e-step-07-deploy-join
-phase7-e2e-step-07-deploy-join: ## Apply manifests, wait for controllers, then join members.
+phase7-e2e-step-07-deploy-join: ## Legacy combined controller/application deploy and join stage.
 	bash test/e2e/afdprivatelink/scripts/step-07-deploy-join.sh
 
 .PHONY: phase7-e2e-evidence

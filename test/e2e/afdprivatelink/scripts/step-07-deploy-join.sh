@@ -148,4 +148,4 @@ mv "${next}" "${AFD_PLS_E2E_STATE_FILE}"
 
 trap - EXIT INT TERM
 complete_stage step-07-deploy-join \
-    "follow section 7 in test/e2e/afdprivatelink/README.md; do not claim Phase 7 complete"
+    "follow test/e2e/afdprivatelink/02-global-service-scenario.md; do not claim Phase 7 complete"

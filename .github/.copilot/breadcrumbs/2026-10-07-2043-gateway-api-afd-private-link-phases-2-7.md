@@ -69,7 +69,7 @@
 
 - [x] **Task R3.1: Add Make targets and preflight coverage for all stages.**
   - Success criteria: preflight validates every stage script and Make target without mutation.
-- [x] **Task R3.2: Rewrite the README setup workflow.**
+- [x] **Task R3.2: Rewrite the operator setup workflow.**
   - Document numbered commands, expected/check outputs, exact resume behavior, mutation mapping,
     failure recovery, the retained run's `InUseSubnetCannotBeDeleted` recovery, diagnostics,
     optional wrapper, validation, and cleanup.
@@ -195,6 +195,22 @@ cleanup. The hardening pass will:
   completion, assignment-finalizer release, and Gateway-finalizer removal. Previously successful
   long-running deletion was silent because the provider blocks while polling Azure.
 
+  ### Phase 7 four-part runbook split
+
+  The user defined the operator boundary and requested exactly four documents:
+
+  1. reusable infrastructure setup, including clusters, CRDs, member registration, controllers, and
+     `GatewayClass`;
+  2. application-owner global-service scenario, including Deployments, Services, WAF,
+     `MultiClusterBackend`, `Gateway`, and `HTTPRoute`;
+  3. lifecycle validation, including member withdrawal, fail-static behavior, and Gateway ownership
+     deletion; and
+  4. bounded environment cleanup.
+
+  The four files must be sequentially cross-linked and independently reinitialize required shell
+  state. Existing scripts/Make targets remain optional reference automation, and all repository
+  references must point to the appropriate new part.
+
 #### Phase 1: Authoritative operator workflow
 
 - [x] **Task L1.1: Replace Section 6 with seven literal command stages.**
@@ -207,7 +223,7 @@ cleanup. The hardening pass will:
   - Success criteria: no authoritative setup command invokes a stage script or setup Make target.
 - [x] **Task L1.2: Keep state bookkeeping explicit without duplicating jq internals.**
   - Source `common.sh`, initialize deterministic names/state, and use its non-cloud bookkeeping
-    helpers while keeping every Azure and Kubernetes mutation visible in the README.
+    helpers while keeping every Azure and Kubernetes mutation visible in the operator documents.
   - Success criteria: five immutable image references and created/reused resources are recorded.
 - [x] **Task L1.3: Render and deploy exact Phase 7 resources.**
   - Document pinned CRDs, populated registration chart, digest-only hub/member/echo/Gateway
@@ -227,7 +243,7 @@ cleanup. The hardening pass will:
 #### Phase 3: Non-mutating validation
 
 - [x] **Task L3.1: Statically validate documentation and scripts.**
-  - Syntax-check extractable README Bash blocks and all existing scripts, run populated Helm
+  - Syntax-check extractable operator-document Bash blocks and all existing scripts, run populated Helm
     renders, execute read-only preflight with a fresh valid run ID, run `make fmt`, and run
     `git diff --check`.
   - Success criteria: validation performs no Azure/Kubernetes mutation and Phase 7 remains
@@ -913,7 +929,7 @@ The approved preparation work is to make the harness self-contained without runn
   `InternalMemberCluster` join. WAF/manifests creates or validates only the exact WAF graph and
   renders locally. Deploy/join applies manifests, waits for controllers/echo, then creates IMCs,
   observes heartbeat, and patches joined status.
-- Rewrote the README around numbered commands, expected checks, exact stage mutation boundaries,
+- Rewrote the original runbook around numbered commands, expected checks, exact stage mutation boundaries,
   resume/failure semantics, common fixes, and retained run `p7-10082105`. Its next command is
   Section 6.2's read-only inspection block; the documented recovery explicitly forbids deleting
   the in-use subnet.
@@ -955,7 +971,7 @@ The approved preparation work is to make the harness self-contained without runn
 
 ### Phase 7 literal-command validation
 
-- Extracted all README `bash` blocks and passed them through `bash -n`.
+- Extracted all operator-runbook `bash` blocks and passed them through `bash -n`.
 - `bash -n test/e2e/afdprivatelink/scripts/*.sh` passed.
 - Populated hub, member, and getting-started registration Helm renders passed.
 - Read-only preflight passed for fresh valid ID `p7-10091647`; it performed account/provider/quota
@@ -969,6 +985,38 @@ The approved preparation work is to make the harness self-contained without runn
   are executable. Final shell syntax and whitespace checks passed after the last helper changes.
 - Changes remain uncommitted. Retained `.phase7` artifacts and attached snapshots were not touched.
   Phase 7 remains incomplete.
+
+### Phase 7 four-part runbook implementation
+
+- Replaced `test/e2e/afdprivatelink/README.md` with exactly four sequential operator documents:
+  `01-infrastructure-setup.md`, `02-global-service-scenario.md`,
+  `03-lifecycle-validation.md`, and `04-cleanup.md`; no index document was added.
+- Part 1 now ends at a reusable platform boundary: infrastructure, Fleet registration,
+  chart-installed networking CRDs, real networking-agent heartbeats, controllers, and
+  `GatewayClass`, with explicit absence checks for application, Gateway, WAF, and AFD resources.
+- Part 2 owns echo Deployments/PLS Services, application WAF, exact PLS Reader grants,
+  `MultiClusterBackend`/`Gateway`/`HTTPRoute`, guarded discovery/approval, traffic sampling, WAF
+  assertion, and evidence.
+- Part 3 owns withdrawal, fail-static outage, visible Gateway/AFD deletion, ownership assertions,
+  evidence, and scenario-specific debugging. Part 4 retains exact guarded cleanup, verifies all
+  four resource groups are absent, optionally removes only exact run-scoped evidence, and unsets
+  the environment.
+- Every document cross-links its previous/next document at top and bottom and initializes required
+  shell state before first use. Optional automation notes explicitly warn that legacy combined
+  script stages do not match the new product boundaries.
+- Updated the step-07 completion message, Make target comments, and POC design reference. The
+  retained run status remains in progress; no Phase 7 completion is claimed.
+
+### Phase 7 four-part runbook validation
+
+- Extracted every Bash fence from each of the four documents and passed each document through
+  `bash -n`; all existing AFD Private Link scripts also passed `bash -n`.
+- Populated hub-controller, member-controller, and getting-started registration Helm renders
+  passed. Relative links resolve, exactly four top-level Markdown files exist in the runbook
+  directory, no stale AFD runbook `README.md`/Section 7 reference remains, `make fmt` passed, and
+  `git diff --check` passed.
+- No Azure or Kubernetes command from the runbooks was executed. Ignored `.phase7` artifacts were
+  not read or changed. All changes remain uncommitted and Phase 7 remains incomplete.
 
 ## Before/After Comparison
 
