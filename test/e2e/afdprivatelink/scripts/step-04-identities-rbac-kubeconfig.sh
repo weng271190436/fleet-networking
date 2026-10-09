@@ -38,8 +38,6 @@ tags=("source=${SOURCE_TAG}" "phase=7" "run-id=${AFD_PLS_E2E_RUN_ID}")
 tenant_id="$(az account show --query tenantId -o tsv)"
 identity_specs=(
     "hub_gateway:afd-hub-id-${AFD_PLS_E2E_RUN_ID}"
-    "member_1:afd-m1-id-${AFD_PLS_E2E_RUN_ID}"
-    "member_2:afd-m2-id-${AFD_PLS_E2E_RUN_ID}"
 )
 # Validate all existing identities before creating any missing identity.
 for spec in "${identity_specs[@]}"; do
@@ -97,10 +95,6 @@ create_or_validate_federation() {
 }
 create_or_validate_federation "${AFD_PLS_E2E_HUB_CLUSTER}" \
     "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" hub-gateway-controller-manager
-create_or_validate_federation "${AFD_PLS_E2E_MEMBER1_CLUSTER}" \
-    "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" member-net-controller-manager-sa
-create_or_validate_federation "${AFD_PLS_E2E_MEMBER2_CLUSTER}" \
-    "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" member-net-controller-manager-sa
 
 resource_group_id="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_RESOURCE_GROUP}"
 ensure_assignment() {
@@ -125,6 +119,10 @@ ensure_assignment() {
     record_role_assignment "${logical_name}" "${principal}" "${role_id}" "${scope}" "${assignment_id}"
 }
 ensure_assignment "${hub_gateway_principal_id}" "${hub_role_id}" "${resource_group_id}" hub-afd
+member_1_principal_id="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
+    '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
+member_2_principal_id="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \
+    '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
 ensure_assignment "${member_1_principal_id}" "${member_role_id}" \
     "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" member-1-pls
 ensure_assignment "${member_2_principal_id}" "${member_role_id}" \

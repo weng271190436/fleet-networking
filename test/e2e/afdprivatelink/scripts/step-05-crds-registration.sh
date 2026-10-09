@@ -31,9 +31,9 @@ for context in "${AFD_PLS_E2E_HUB_CONTEXT}" "${AFD_PLS_E2E_MEMBER1_CONTEXT}" \
 done
 hub_principal="$(jq -r --arg name "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" \
     '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
-member_1_principal="$(jq -r --arg name "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" \
+member_1_principal="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
     '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
-member_2_principal="$(jq -r --arg name "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" \
+member_2_principal="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \
     '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
 [[ -n "${hub_principal}" && -n "${member_1_principal}" && -n "${member_2_principal}" ]] || {
     echo "error: controller identity state is incomplete; rerun step 04" >&2

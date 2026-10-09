@@ -31,9 +31,9 @@ done
 
 hub_client="$(jq -r --arg name "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" \
     '.identities[] | select(.name == $name) | .clientId' "${AFD_PLS_E2E_STATE_FILE}")"
-member_1_client="$(jq -r --arg name "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" \
+member_1_client="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
     '.identities[] | select(.name == $name) | .clientId' "${AFD_PLS_E2E_STATE_FILE}")"
-member_2_client="$(jq -r --arg name "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" \
+member_2_client="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \
     '.identities[] | select(.name == $name) | .clientId' "${AFD_PLS_E2E_STATE_FILE}")"
 [[ -n "${hub_client}" && -n "${member_1_client}" && -n "${member_2_client}" ]] || {
     echo "error: controller client ID state is incomplete; rerun step 04" >&2
@@ -108,13 +108,14 @@ render_member() {
         --set-string refreshtoken.repository="${refresh_repo}" --set-string refreshtoken.digest="${refresh_digest}" \
         --set-string resources.requests.cpu=25m --set-string resources.requests.memory=64Mi \
         --set tlsClientInsecure=false --set-string azure.clientid="${client_id}" \
-        --set azure.workloadIdentityEnabled=true --set enableTrafficManagerFeature=false \
+        --set azure.workloadIdentityEnabled=false --set enableTrafficManagerFeature=false \
         --set enableAFDPrivateLinkFeature=true \
         --set-string afdRequesterSubscriptionAllowlist="${EXPECTED_SUBSCRIPTION_ID}" \
         --set-string azureCloudConfig.tenantId="${tenant_id}" \
         --set-string azureCloudConfig.subscriptionId="${EXPECTED_SUBSCRIPTION_ID}" \
         --set-string azureCloudConfig.aadClientId="${client_id}" \
-        --set azureCloudConfig.useFederatedWorkloadIdentityExtension=true \
+        --set azureCloudConfig.useManagedIdentityExtension=true \
+        --set-string azureCloudConfig.userAssignedIdentityID="${client_id}" \
         --set-string azureCloudConfig.resourceGroup="${node_rg}" \
         --set-string azureCloudConfig.location="${AFD_PLS_E2E_LOCATION}" >"${manifest}"
 }

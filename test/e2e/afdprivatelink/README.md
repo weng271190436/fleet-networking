@@ -124,7 +124,7 @@ One run creates:
 - primary RG `fleet-afd-pls-${AFD_PLS_E2E_RUN_ID}`;
 - Basic ACR `fleetp7${AFD_PLS_E2E_RUN_ID//-/}d712`;
 - four image repositories/builds: hub Gateway controller, member controller, CRD installer, echo;
-- three controller user-assigned identities/federated credentials, three AKS control-plane
+- one hub-controller user-assigned identity/federated credential, three AKS control-plane
   identities, three AKS kubelet identities, five built-in resource-scoped assignments, and three
   AKS-created AcrPull assignments;
 - three one-node `Standard_D2as_v4` workload-identity-enabled AKS clusters;
@@ -508,8 +508,6 @@ Expected: exactly the hub and two members are `Running`, and every VMSS instance
 ```bash
 identity_specs=(
   "hub_gateway:afd-hub-id-${AFD_PLS_E2E_RUN_ID}:$AFD_PLS_E2E_HUB_CLUSTER:hub-gateway-controller-manager"
-  "member_1:afd-m1-id-${AFD_PLS_E2E_RUN_ID}:$AFD_PLS_E2E_MEMBER1_CLUSTER:member-net-controller-manager-sa"
-  "member_2:afd-m2-id-${AFD_PLS_E2E_RUN_ID}:$AFD_PLS_E2E_MEMBER2_CLUSTER:member-net-controller-manager-sa"
 )
 federation_name="fleet-system-${AFD_PLS_E2E_RUN_ID}"
 for spec in "${identity_specs[@]}"; do
@@ -577,10 +575,10 @@ hub_role_id="$(az role definition list --name Contributor --query '[0].name' -o 
 member_role_id="$(az role definition list --name 'Network Contributor' --query '[0].name' -o tsv)"
 hub_gateway_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
-member_1_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
-  -n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
-member_2_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
-  -n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
+member_1_principal_id="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
+  '.identities[] | select(.name==$n).principalId' "$AFD_PLS_E2E_STATE_FILE")"
+member_2_principal_id="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \
+  '.identities[] | select(.name==$n).principalId' "$AFD_PLS_E2E_STATE_FILE")"
 member_1_aks_principal_id="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "$AFD_PLS_E2E_MEMBER1_CLUSTER" --query identity.principalId -o tsv)"
 member_2_aks_principal_id="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
@@ -729,7 +727,8 @@ kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts
 jq '.identities,.roleAssignments' "$AFD_PLS_E2E_STATE_FILE"
 ```
 
-Expected: all three exact contexts, controller identities, and five scoped assignments appear.
+Expected: all three exact contexts, the hub controller and AKS-managed identities, and five scoped
+assignments appear.
 
 ### 6.5 Stage 05 — pinned CRDs and Fleet registration
 
@@ -746,9 +745,9 @@ for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
   "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
   k "$context" get --raw=/readyz
 done
-member_1_principal="$(jq -r --arg n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" \
+member_1_principal="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
   '.identities[] | select(.name==$n).principalId' "$AFD_PLS_E2E_STATE_FILE")"
-member_2_principal="$(jq -r --arg n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" \
+member_2_principal="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \
   '.identities[] | select(.name==$n).principalId' "$AFD_PLS_E2E_STATE_FILE")"
 test -n "$member_1_principal"; test -n "$member_2_principal"
 ```
@@ -867,9 +866,9 @@ Rendering below is local-only. Load identity, cluster, and immutable-image value
 tenant_id="$(az account show --query tenantId -o tsv)"
 hub_client="$(jq -r --arg n "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" \
   '.identities[] | select(.name==$n).clientId' "$AFD_PLS_E2E_STATE_FILE")"
-member_1_client="$(jq -r --arg n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" \
+member_1_client="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
   '.identities[] | select(.name==$n).clientId' "$AFD_PLS_E2E_STATE_FILE")"
-member_2_client="$(jq -r --arg n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" \
+member_2_client="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \
   '.identities[] | select(.name==$n).clientId' "$AFD_PLS_E2E_STATE_FILE")"
 hub_server="$(k "$AFD_PLS_E2E_HUB_CONTEXT" config view --raw --minify \
   -o jsonpath='{.clusters[0].cluster.server}')"
@@ -909,13 +908,14 @@ render_member() {
     --set-string refreshtoken.repository="$refresh_repo" --set-string refreshtoken.digest="$refresh_digest" \
     --set-string resources.requests.cpu=25m --set-string resources.requests.memory=64Mi \
     --set tlsClientInsecure=false --set-string azure.clientid="$client" \
-    --set azure.workloadIdentityEnabled=true --set enableTrafficManagerFeature=false \
+    --set azure.workloadIdentityEnabled=false --set enableTrafficManagerFeature=false \
     --set enableAFDPrivateLinkFeature=true \
     --set-string afdRequesterSubscriptionAllowlist="$EXPECTED_SUBSCRIPTION_ID" \
     --set-string azureCloudConfig.tenantId="$tenant_id" \
     --set-string azureCloudConfig.subscriptionId="$EXPECTED_SUBSCRIPTION_ID" \
     --set-string azureCloudConfig.aadClientId="$client" \
-    --set azureCloudConfig.useFederatedWorkloadIdentityExtension=true \
+    --set azureCloudConfig.useManagedIdentityExtension=true \
+    --set-string azureCloudConfig.userAssignedIdentityID="$client" \
     --set-string azureCloudConfig.resourceGroup="$node_rg" \
     --set-string azureCloudConfig.location="$AFD_PLS_E2E_LOCATION" >"$manifest"
 }
@@ -1173,6 +1173,16 @@ chart, and `InternalMemberCluster` join requests observed by the real networking
 waits for `ServiceExportImportAgent/Joined=True` and a heartbeat before setting the aggregate
 selector-facing `MemberCluster/Joined=True` condition. Only that aggregate condition remains a
 validation-scoped substitute.
+
+Authentication also follows the existing E2E split:
+
+- the hub Gateway controller uses its dedicated federated workload identity; the cloud config sets
+  the compatibility `useManagedIdentityExtension=true` flag required by Fleet v0.14.0 validation,
+  while the Azure SDK selects the injected federated credential first;
+- each member controller and its pinned refresh-token sidecar use the member AKS kubelet managed
+  identity through IMDS, matching `test/scripts/bootstrap.sh`; and
+- the member AKS control-plane identities receive `Network Contributor` only on the exact test
+  VNet so the AKS cloud provider can reconcile ILB and PLS subnets.
 
 ## 7. Perform the human-run POC validation
 

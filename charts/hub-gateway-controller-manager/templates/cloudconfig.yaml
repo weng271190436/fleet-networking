@@ -11,6 +11,7 @@ stringData:
       "tenantId": {{ .Values.azure.tenantId | quote }},
       "subscriptionId": {{ .Values.azure.subscriptionId | quote }},
       "aadClientId": {{ .Values.azure.clientId | quote }},
+      "useManagedIdentityExtension": true,
       "useFederatedWorkloadIdentityExtension": true,
       "resourceGroup": {{ .Values.azure.resourceGroup | quote }},
       "location": {{ required "azure.location is required" .Values.azure.location | quote }}

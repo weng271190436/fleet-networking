@@ -104,6 +104,11 @@ deallocated and nodes carried shutdown/out-of-service taints. The manual workflo
 power and node readiness before deployment, expose an explicit VMSS start recovery, and grant each
 member AKS control-plane identity `Network Contributor` on the exact test VNet so cloud provider
 can read PLS subnets.
+Live controller logs also showed that Fleet v0.14.0 cloud-config validation requires
+`useManagedIdentityExtension=true` even when federated workload identity is enabled, and pinned
+`refresh-token:v0.1.0` rejects `--workloadIdentityEnabled`. Phase 7 therefore follows the existing
+E2E auth pattern exactly: hub uses federated identity with the compatibility managed-identity flag,
+while member controllers and refresh-token use each AKS kubelet managed identity through IMDS.
 
 #### Phase 1: Authoritative operator workflow
 
@@ -746,7 +751,7 @@ The approved preparation work is to make the harness self-contained without runn
   reported 0/10000 regional vCPUs and 0/100 DSv3-family vCPUs in use.
 - The printed plan used run ID `p7-20261008`, primary resource group
   `fleet-afd-pls-p7-20261008`, Basic ACR `fleetp7p720261008d712`, four image repositories, three
-  controller identities/federations, AKS-managed identities, five resource-scoped built-in role assignments, three one-node
+  hub controller identity/federation, AKS-managed identities, five resource-scoped built-in role assignments, three one-node
   `Standard_D2as_v4` clusters, one VNet, two ILBs, two PLS resources, one AFD Premium graph, and one
   WAF policy. No provisioning, image publication, Kubernetes mutation, live validation, or cleanup
   ran.

@@ -180,7 +180,7 @@ Billable plan:
   - Azure Container Registry Basic (1): ${AFD_PLS_E2E_ACR}
   - four image repositories/builds: hub-gateway-controller-manager, member-net-controller-manager,
     net-crd-installer, afd-pls-echo; setup records immutable digests and deploys only @sha256 refs
-  - user-assigned managed identities (3) and federated credentials (3)
+  - hub user-assigned managed identity (1) and federated credential (1)
   - AKS-managed control-plane identities (3) and kubelet identities (3)
   - built-in resource-scoped role assignments (5) and AKS-created AcrPull assignments (3)
   - AKS clusters (3): ${AFD_PLS_E2E_HUB_CLUSTER}, ${AFD_PLS_E2E_MEMBER1_CLUSTER}, ${AFD_PLS_E2E_MEMBER2_CLUSTER}

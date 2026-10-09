@@ -104,7 +104,9 @@ spec:
             {{ $provider := .Values.config.provider }}
             - {{ $provider }}
             {{ range $key, $value := (index .Values $provider) }}
+            {{- if ne $key "workloadIdentityEnabled" }}
             - --{{ $key }}={{ $value }}
+            {{- end }}
             {{ end }}
             - --v={{ .Values.logVerbosity }}
           ports:
