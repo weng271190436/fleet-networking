@@ -37,6 +37,32 @@ for input in "${build_inputs[@]}"; do
         exit 1
     }
 done
+stage_scripts=(
+    setup.sh
+    step-01-registry-images.sh
+    step-02-network.sh
+    step-03-aks.sh
+    step-04-identities-rbac-kubeconfig.sh
+    step-05-crds-registration.sh
+    step-06-waf-manifests.sh
+    step-07-deploy-join.sh
+)
+for script in "${stage_scripts[@]}"; do
+    [[ -f "${SCRIPT_DIR}/${script}" ]] || {
+        echo "error: required stage script ${script} is missing" >&2
+        exit 1
+    }
+    bash -n "${SCRIPT_DIR}/${script}"
+done
+for target in \
+    phase7-e2e-step-01-registry-images phase7-e2e-step-02-network phase7-e2e-step-03-aks \
+    phase7-e2e-step-04-identities-rbac-kubeconfig phase7-e2e-step-05-crds-registration \
+    phase7-e2e-step-06-waf-manifests phase7-e2e-step-07-deploy-join; do
+    grep -Eq "^${target}:" "${REPO_ROOT}/Makefile" || {
+        echo "error: required Make target ${target} is missing" >&2
+        exit 1
+    }
+done
 grep -Fq 'cmd/hub-gateway-controller-manager/main.go' \
     "${REPO_ROOT}/docker/hub-gateway-controller-manager.Dockerfile"
 grep -Fq 'MEMBER_NAME' "${REPO_ROOT}/test/e2e/afdprivatelink/echo/entrypoint.sh"
@@ -132,7 +158,7 @@ branch="$(git branch --show-current)"
     echo "error: expected branch poc/gateway-api-afd-private-link, found ${branch}" >&2
     exit 1
 }
-required_commit="37ca0ca9828d17b1b792e73be4bea207f9cbc36f"
+required_commit="5093b017e6df521a08af424b497701d3658381a6"
 git cat-file -e "${required_commit}^{commit}"
 git merge-base --is-ancestor "${required_commit}" HEAD || {
     echo "error: branch does not contain required starting commit ${required_commit}" >&2

@@ -18,6 +18,71 @@
   own commit".
 - Phase 1 was committed and pushed as `395e965`.
 - Azure CLI authentication, a Kubernetes context, Helm, and kubectl are currently available.
+- On 2026-10-09 the user explicitly approved a non-mutating refactor of the Phase 7 setup harness
+  on commit `5093b01`, retaining live run `p7-10082105`. The work must remain uncommitted and must
+  not run setup, cleanup, Azure/Kubernetes mutations, image pushes, or modify retained `.phase7`
+  artifacts.
+- The retained run exposed an unsafe rerun: `az network vnet create` was invoked for an existing
+  VNet that contained only the hub subnet, and Azure attempted to reconcile away the in-use
+  `member-1` subnet attached to the Kubernetes internal load balancer. Azure rejected this as
+  `InUseSubnetCannotBeDeleted`. Setup stages must therefore validate and reuse exact existing
+  resources, create only missing owned resources, and never replace or delete networking.
+
+### Phase 7 resumable setup refactor plan
+
+#### Phase 1: Shared safety and state
+
+- [x] **Task R1.1: Add stage initialization, prerequisite, state-upsert, and diagnostic helpers.**
+  - Every mutating stage must initialize deterministic run paths, require exact approval, validate
+    subscription/run ownership, fail before mutation when prerequisites are absent, preserve the
+    environment on failure, and print the next command.
+  - Success criteria: reruns do not duplicate state entries and diagnostics never expose Secrets.
+- [x] **Task R1.2: Preserve exact cleanup boundaries and retained-artifact safety.**
+  - Do not change ignored `.phase7` artifacts or broaden cleanup.
+  - Success criteria: cleanup remains exact/tag-bounded and no live state is touched during this
+    refactor.
+
+#### Phase 2: Split setup into independently resumable stages
+
+- [x] **Task R2.1: Implement registry/images and network stages.**
+  - Registry reuses an exactly tagged Basic ACR, republishes the four images, resolves immutable
+    digests, and upserts state.
+  - Network validates an existing VNet's tags/address space, validates each existing subnet
+    prefix/policy, and creates only absent subnets. It never calls VNet create for an existing VNet
+    and never updates/deletes an existing subnet.
+  - Success criteria: an interrupted run can safely resume without replacing network resources.
+- [x] **Task R2.2: Implement AKS and identity/RBAC/kubeconfig stages.**
+  - Reuse exact tagged clusters after validating resource group, node resource group, subnet, SKU,
+    and workload identity settings; reuse exact identities, assignments, federations, and contexts.
+  - Success criteria: existing exact resources are validated rather than recreated.
+- [x] **Task R2.3: Implement CRD/registration, WAF/render, and deploy/join stages.**
+  - Apply CRDs, registration resources, and MemberClusters before deployment; render manifests
+    without applying them; deploy/wait controllers before creating InternalMemberClusters,
+    waiting for heartbeat, and marking MemberClusters joined.
+  - Success criteria: dependencies and join ordering are explicit and each stage is independently
+    retryable.
+- [x] **Task R2.4: Retain setup only as an optional sequential wrapper.**
+  - Success criteria: the wrapper invokes the seven stages in order and is clearly discouraged for
+    debugging/resume.
+
+#### Phase 3: Operator workflow and static validation
+
+- [x] **Task R3.1: Add Make targets and preflight coverage for all stages.**
+  - Success criteria: preflight validates every stage script and Make target without mutation.
+- [x] **Task R3.2: Rewrite the README setup workflow.**
+  - Document numbered commands, expected/check outputs, exact resume behavior, mutation mapping,
+    failure recovery, the retained run's `InUseSubnetCannotBeDeleted` recovery, diagnostics,
+    optional wrapper, validation, and cleanup.
+  - Success criteria: the next safe command for `p7-10082105` is unambiguous.
+- [x] **Task R3.3: Run static-only validation.**
+  - Run `bash -n`, ShellCheck when installed, read-only preflight with a fresh nonexistent run ID,
+    populated Helm renders, quick Docker definition checks, `make fmt`, and `git diff --check`.
+    Document the existing default getting-started chart lint issue while requiring populated render
+    success.
+  - Success criteria: no Azure/Kubernetes mutation, image push, setup stage, or cleanup executes.
+
+The user supplied explicit approval for this implementation plan in the task request, so the
+refactor may proceed without a further confirmation round. Phase 7 remains in progress.
 
 ## Plan
 
@@ -678,6 +743,50 @@ The approved preparation work is to make the harness self-contained without runn
   requests on a one-node validation cluster. The hub chart now requires location, Phase 7 renders
   25m member-container CPU requests, and all generated paths are recomputed from the active run ID
   to prevent stale state-path reuse.
+
+### Phase 7 resumable setup refactor
+
+- Replaced the monolithic setup implementation with seven explicit numbered scripts and matching
+  Make targets. `phase7-e2e-setup` is now only a warning wrapper that invokes those stages in
+  sequence and is not recommended for resume/debug.
+- Added shared deterministic initialization, repository-root state paths, exact state validation,
+  keyed resource/identity/role upserts, completed-stage deduplication, prerequisite checks, and
+  per-stage failure diagnostics without Secret reads. No stage performs automatic cleanup.
+- The network stage distinguishes absent and existing VNets. For an existing VNet it validates the
+  exact `/16`, ownership tags, and every present subnet prefix/policy before mutation; it creates
+  only absent subnets and never updates/deletes an existing subnet. The retained legacy untagged
+  VNet may receive tags only when its exact ID is already recorded in the matching run state.
+- The AKS stage validates all existing exact clusters before creating missing ones, including tags,
+  location, primary/node RG, subnet, node SKU, Standard LB, OIDC, and workload identity. The
+  identity stage reuses tagged identities, exact federations and scoped roles, then refreshes
+  deterministic kubeconfig contexts.
+- Registration now creates CRDs/RoleBindings/MemberClusters before deployment but defers
+  `InternalMemberCluster` join. WAF/manifests creates or validates only the exact WAF graph and
+  renders locally. Deploy/join applies manifests, waits for controllers/echo, then creates IMCs,
+  observes heartbeat, and patches joined status.
+- Rewrote the README around numbered commands, expected checks, exact stage mutation boundaries,
+  resume/failure semantics, common fixes, and retained run `p7-10082105`. Its next command is
+  `make phase7-e2e-step-02-network`; the documented recovery explicitly forbids deleting the
+  in-use subnet.
+
+### Phase 7 refactor static validation
+
+- `bash -n test/e2e/afdprivatelink/scripts/*.sh` and `git diff --check` passed.
+- ShellCheck was not installed, so it was not run.
+- `make fmt` passed and introduced no unrelated tracked changes.
+- Read-only preflight passed with fresh nonexistent run ID `p7-s1009`, the expected subscription,
+  branch, and `5093b017e6df521a08af424b497701d3658381a6` ancestor. It validated all stage scripts and
+  Make targets. It performed no Azure/Kubernetes mutation and created no run artifacts.
+- Populated Helm renders passed for the registration, hub Gateway, and member controller charts.
+  Default `helm lint examples/getting-started/charts/hub` still has the existing
+  `templates/ns.yaml: invalid Yaml document separator: apiVersion: v1` issue because its required
+  member values are absent; the populated Phase 7 render passes.
+- Docker daemon/buildx and build-input checks passed. No image build/push, setup stage, cleanup,
+  Azure create/update/delete, Kubernetes apply/delete/patch, or Helm install/upgrade ran.
+- `make -n` resolved all seven numbered targets to their intended stage scripts; all stage scripts
+  are executable. Final shell syntax and whitespace checks passed after the last helper changes.
+- Changes remain uncommitted. Retained `.phase7` artifacts and attached snapshots were not touched.
+  Phase 7 remains incomplete.
 
 ## Before/After Comparison
 

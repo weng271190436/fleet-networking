@@ -1,9 +1,9 @@
 # Phase 7 AFD Private Link human-validation runbook
 
 > **Status: In progress.** The runbook and guarded automation are implemented, but the complete
-> human validation has not passed. The latest live attempt reached Kubernetes deployment and
-> stopped because `hub-gateway-controller-manager` did not become available. Do not interpret this
-> document or its commit as Phase 7 completion.
+> human validation has not passed. Retained run `p7-10082105` stopped during a monolithic rerun
+> when Azure rejected an attempted in-use subnet deletion. Do not interpret this document or its
+> commit as Phase 7 completion.
 
 This is the standalone runbook for the real-Azure Phase 7 human-run POC validation. Commands marked
 **READ ONLY** do not change Azure or Kubernetes. Commands marked **MUTATING** create, update, or
@@ -14,7 +14,7 @@ The fixed target is:
 - subscription: `AKS Fleet Development/Test`
 - subscription ID: `d712bfad-d238-486f-8f1b-bf61a831b712`
 - branch: `poc/gateway-api-afd-private-link`
-- required ancestor: `37ca0ca9828d17b1b792e73be4bea207f9cbc36f`
+- required ancestor: `5093b017e6df521a08af424b497701d3658381a6`
 
 No credentials belong in this repository, command history, manifests, or state inventory.
 
@@ -112,6 +112,11 @@ Preflight verifies:
 It performs Azure queries and local validation only. It does not create a Docker builder, publish
 images, render files, or call mutating Azure/Kubernetes operations.
 
+The getting-started hub chart requires populated member values. Its default `helm lint` currently
+reports the pre-existing `templates/ns.yaml: invalid Yaml document separator: apiVersion: v1`
+issue; Phase 7 validates the chart with both member IDs/principal IDs populated, and that render
+must pass.
+
 ### Billable/resource plan to approve
 
 One run creates:
@@ -144,32 +149,114 @@ export AFD_PLS_E2E_APPROVED=true
 
 Every mutating entry point rejects any value other than the exact lowercase string `true`.
 
-## 6. Provision, build, render, and deploy
+## 6. Run the seven resumable setup stages
 
-**MUTATING — creates billable Azure and Kubernetes resources:**
+Run one numbered target at a time. This is the recommended workflow for both a new run and a
+resume. Every target is **MUTATING**, requires `AFD_PLS_E2E_APPROVED=true`, recomputes all names
+from the current run ID, validates the exact subscription/tags/state and all prerequisites before
+its first mutation, upserts state, preserves the environment on failure, and prints the next
+command. A completed stage can be rerun safely with the same run ID.
+
+| Stage | Command | Azure mutation | Kubernetes mutation |
+|---|---|---|---|
+| 01 | `make phase7-e2e-step-01-registry-images` | create/reuse tagged RG and Basic ACR; push four images | none |
+| 02 | `make phase7-e2e-step-02-network` | create VNet only if absent; create only absent subnets; optionally restore tags on the exact state-recorded legacy VNet | none |
+| 03 | `make phase7-e2e-step-03-aks` | create only absent AKS clusters; tag exact AKS node RGs | none |
+| 04 | `make phase7-e2e-step-04-identities-rbac-kubeconfig` | create/reuse identities, federations, and exact scoped assignments; read AKS credentials | local kubeconfig only |
+| 05 | `make phase7-e2e-step-05-crds-registration` | none | apply CRDs, namespaces, Azure-principal registration, and `MemberCluster`s |
+| 06 | `make phase7-e2e-step-06-waf-manifests` | create/reuse exact WAF policy/rule | read hub connection data only; render local manifests |
+| 07 | `make phase7-e2e-step-07-deploy-join` | read assignments only; controllers later own AFD | apply workloads, wait for controllers, create `InternalMemberCluster`s, wait heartbeat, patch joined status |
+
+### 6.1 Registry and immutable images
+
+```bash
+make phase7-e2e-step-01-registry-images
+jq '.images' ".phase7-${AFD_PLS_E2E_RUN_ID}.state.json"
+```
+
+Expected: five non-empty digest-pinned image references. Existing ACRs are reused only when the
+resource group, `Basic` SKU, `source`, and `run-id` match; images are rebuilt/pushed on rerun.
+
+### 6.2 Network
+
+```bash
+make phase7-e2e-step-02-network
+az network vnet subnet list -g "fleet-afd-pls-${AFD_PLS_E2E_RUN_ID}" \
+  --vnet-name "afd-vnet-${AFD_PLS_E2E_RUN_ID}" \
+  --query '[].{name:name,prefix:addressPrefix,plsPolicy:privateLinkServiceNetworkPolicies}' -o table
+```
+
+Expected: `hub`, `member-1`, `member-2`, `pls-1`, and `pls-2` with their fixed prefixes and
+`Disabled` PLS network policy. If the VNet exists, the stage **never** invokes
+`az network vnet create`; it validates address space first, validates each existing subnet without
+updating it, and creates only missing subnets.
+
+### 6.3 AKS
+
+```bash
+make phase7-e2e-step-03-aks
+az aks list -g "fleet-afd-pls-${AFD_PLS_E2E_RUN_ID}" \
+  --query '[].{name:name,nodeResourceGroup:nodeResourceGroup,power:powerState.code}' -o table
+```
+
+Expected: the exact hub and two member clusters are `Running`. Existing clusters are reused only
+after tag, primary RG, node RG, subnet, `Standard_D2as_v4`, Standard LB, OIDC, and workload
+identity validation; no cluster is recreated.
+
+### 6.4 Identities, RBAC, and kubeconfig
+
+```bash
+make phase7-e2e-step-04-identities-rbac-kubeconfig
+KUBECONFIG=".phase7-${AFD_PLS_E2E_RUN_ID}.kubeconfig" kubectl config get-contexts
+```
+
+Expected: exact `phase7-...-hub`, `...-member-1`, and `...-member-2` contexts. Existing tagged
+identities, exact issuer/subject/audience federations, and exact principal/role/scope assignments
+are reused and state entries are replaced by logical key rather than appended.
+
+### 6.5 CRDs and registration
+
+```bash
+make phase7-e2e-step-05-crds-registration
+kubectl --kubeconfig ".phase7-${AFD_PLS_E2E_RUN_ID}.kubeconfig" \
+  --context "phase7-${AFD_PLS_E2E_RUN_ID}-hub" get memberclusters
+```
+
+Expected: both exact member names exist. This stage intentionally does **not** create
+`InternalMemberCluster`s; networking controllers are not deployed yet.
+
+### 6.6 WAF and manifests
+
+```bash
+make phase7-e2e-step-06-waf-manifests
+grep -R 'image:' ".phase7-${AFD_PLS_E2E_RUN_ID}" | grep -v '@sha256:' && exit 1 || true
+```
+
+Expected: the command prints the step-07 next command and no non-digest workload image line.
+This stage renders files only; it does not apply Kubernetes manifests.
+
+### 6.7 Deploy, wait, then join
+
+```bash
+make phase7-e2e-step-07-deploy-join
+kubectl --kubeconfig ".phase7-${AFD_PLS_E2E_RUN_ID}.kubeconfig" \
+  --context "phase7-${AFD_PLS_E2E_RUN_ID}-hub" get memberclusters
+```
+
+Expected: controller/echo Deployments become Available before `InternalMemberCluster` join
+requests are created; both networking-agent heartbeats are observed before joined status is
+patched.
+
+### Optional sequential wrapper
+
+For a brand-new unattended run only, the old target remains as a thin sequential wrapper:
 
 ```bash
 make phase7-e2e-setup
 ```
 
-Setup does the following automatically:
-
-1. creates and tags the primary RG and run-scoped Basic ACR;
-2. builds/pushes
-   `hub-gateway-controller-manager`, `member-net-controller-manager`, `net-crd-installer`, and the
-   repository-owned deterministic echo server;
-3. queries ACR for each digest and uses only `repository@sha256:<64 hex>` in deployments;
-4. creates the VNet/subnets, three AKS clusters, workload identities, federated credentials, and
-   the approved built-in role assignments at exact disposable RG scopes;
-5. writes an explicit kubeconfig with run-specific hub/member contexts;
-6. applies Fleet `v0.14.0`, Gateway API `v1.2.1`, and repository networking CRDs;
-7. installs the existing getting-started hub registration chart, uses Azure-principal
-   RoleBindings and the member chart's refresh-token sidecar, then creates `InternalMemberCluster`
-   join requests and waits for networking-agent heartbeats;
-8. creates the WAF policy/rule, renders the actual WAF ID into Gateway resources;
-9. renders the new hub Gateway chart and existing member chart, appends digest-pinned echo
-   Deployments/annotated Services, and applies all three manifests; and
-10. waits for controller Deployments.
+It is **not recommended** for debugging or resuming because it starts again at image publication.
+It never performs automatic cleanup.
 
 Generated files are mode-protected and run-scoped:
 
@@ -190,8 +277,29 @@ AKS-created assignments, resource IDs, and RGs. It contains no bearer tokens.
 The member chart uses reduced 25m CPU requests for each controller pod container in this
 single-node validation topology; default production chart requests are unchanged.
 
-If setup fails, it writes `.phase7-${AFD_PLS_E2E_RUN_ID}.results.setup-failure.log` before bounded
-cleanup. Review that file before retrying.
+If a stage fails, it writes
+`.phase7-${AFD_PLS_E2E_RUN_ID}.results.step-NN-...-failure.log`, preserves all resources, and
+performs no automatic cleanup. Review that file and rerun only the failed numbered target.
+
+### Recovery for retained run `p7-10082105`
+
+The previous monolithic rerun called `az network vnet create` on an existing VNet. Azure treated
+the supplied single hub subnet as desired VNet state and attempted to remove `member-1`, which was
+attached to a Kubernetes internal load balancer. Azure correctly returned
+`InUseSubnetCannotBeDeleted`. **Do not delete or detach that subnet.**
+
+After exporting the fixed subscription, run ID, location, and approval variables, the next command
+is:
+
+```bash
+make phase7-e2e-step-02-network
+```
+
+The new network stage reuses the VNet, validates every existing subnet, creates only a genuinely
+absent subnet, and never updates/deletes an in-use subnet. If the legacy VNet has no tags, it adds
+the run tags only when the exact VNet ID is already recorded in this run's state. Any prefix,
+policy, ownership, or tag conflict stops before subnet creation; inspect the diagnostic log rather
+than changing/deleting network resources.
 
 ### Fleet registration limitation
 
@@ -535,24 +643,31 @@ tracing.
 
 ## 9. Safe reruns and failure recovery
 
-Setup and apply operations are idempotent for the same run ID. A rerun accepts only existing RG,
-ACR, identity, and role-assignment resources that match the run's tags/state and exact scopes. It
-rebuilds the same tags, resolves current immutable digests, refreshes Azure-principal registration,
-rerenders manifests, and reapplies them.
-
-To retry after diagnosing a transient failure:
+Resume at the failed numbered stage, not at the wrapper. A stage accepts only exact resources that
+match its deterministic name, tags, state, topology, and scope. State resources, identities, role
+assignments, and completed-stage markers are upserted/deduplicated.
 
 ```bash
 # MUTATING
-make phase7-e2e-setup
+make phase7-e2e-step-NN-...
 ```
 
-Then resume the human checklist at section 7.1 and capture new stage-labelled evidence.
+Each stage checks all of its prerequisites before mutation. A missing prerequisite tells you which
+preceding stage to run. A conflicting existing resource is never replaced; inspect it and resolve
+the ownership/configuration mismatch manually. Never delete an in-use subnet as recovery.
 
-Setup preserves the partially provisioned environment after a failure so you can inspect it, fix
-the issue, and rerun setup with the same run ID. It captures diagnostics but does not delete Azure
-or Kubernetes resources automatically. Billable resources remain active until setup succeeds or
-you explicitly run:
+Common fixes:
+
+- missing image state or ACR: rerun step 01;
+- missing/wrong subnet: rerun step 02 only when absent; a wrong existing prefix/policy requires
+  investigation, not an update;
+- missing AKS cluster: rerun step 03; an existing topology mismatch is a hard stop;
+- missing identity/context: rerun step 04;
+- missing CRD/MemberCluster: rerun step 05;
+- stale/missing manifests: rerun step 06, then step 07;
+- controller timeout: inspect the stage diagnostic log and pod events/logs, then rerun step 07.
+
+Billable resources remain active until validation succeeds or you explicitly run:
 
 ```bash
 # MUTATING / DESTRUCTIVE, but bounded to exact validated run resources

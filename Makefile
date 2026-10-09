@@ -164,8 +164,36 @@ phase7-e2e-preflight: ## Validate the Phase 7 Azure plan without mutation.
 	bash test/e2e/afdprivatelink/scripts/preflight.sh
 
 .PHONY: phase7-e2e-setup
-phase7-e2e-setup: ## Provision the explicitly approved, bounded Phase 7 validation environment.
+phase7-e2e-setup: ## Optional: run all Phase 7 setup stages; prefer numbered targets for resume/debug.
 	bash test/e2e/afdprivatelink/scripts/setup.sh
+
+.PHONY: phase7-e2e-step-01-registry-images
+phase7-e2e-step-01-registry-images: ## Create/reuse ACR, push images, and record immutable digests.
+	bash test/e2e/afdprivatelink/scripts/step-01-registry-images.sh
+
+.PHONY: phase7-e2e-step-02-network
+phase7-e2e-step-02-network: ## Safely validate/reuse the VNet and create only missing subnets.
+	bash test/e2e/afdprivatelink/scripts/step-02-network.sh
+
+.PHONY: phase7-e2e-step-03-aks
+phase7-e2e-step-03-aks: ## Create or validate/reuse the three exact AKS clusters.
+	bash test/e2e/afdprivatelink/scripts/step-03-aks.sh
+
+.PHONY: phase7-e2e-step-04-identities-rbac-kubeconfig
+phase7-e2e-step-04-identities-rbac-kubeconfig: ## Reconcile identities, RBAC, federations, and contexts.
+	bash test/e2e/afdprivatelink/scripts/step-04-identities-rbac-kubeconfig.sh
+
+.PHONY: phase7-e2e-step-05-crds-registration
+phase7-e2e-step-05-crds-registration: ## Apply CRDs, registration resources, and MemberClusters.
+	bash test/e2e/afdprivatelink/scripts/step-05-crds-registration.sh
+
+.PHONY: phase7-e2e-step-06-waf-manifests
+phase7-e2e-step-06-waf-manifests: ## Create/validate WAF and render digest-pinned manifests only.
+	bash test/e2e/afdprivatelink/scripts/step-06-waf-manifests.sh
+
+.PHONY: phase7-e2e-step-07-deploy-join
+phase7-e2e-step-07-deploy-join: ## Apply manifests, wait for controllers, then join members.
+	bash test/e2e/afdprivatelink/scripts/step-07-deploy-join.sh
 
 .PHONY: phase7-e2e-evidence
 phase7-e2e-evidence: ## Collect a read-only Phase 7 snapshot; set EVIDENCE_LABEL if desired.
