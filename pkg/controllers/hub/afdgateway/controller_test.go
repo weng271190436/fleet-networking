@@ -39,6 +39,20 @@ type fakeProvider struct {
 	withdraws    int
 }
 
+func TestSetListenersSetsRequiredTransitionTimes(t *testing.T) {
+	gateway := validGateway()
+	setListeners(gateway, metav1.ConditionTrue, string(gatewayv1.ListenerReasonAccepted), "ready", 1)
+
+	if len(gateway.Status.Listeners) != 1 {
+		t.Fatalf("listener status count = %d, want 1", len(gateway.Status.Listeners))
+	}
+	for _, condition := range gateway.Status.Listeners[0].Conditions {
+		if condition.LastTransitionTime.IsZero() {
+			t.Errorf("condition %q transition time is zero", condition.Type)
+		}
+	}
+}
+
 func (p *fakeProvider) Reconcile(context.Context, gatewaymodel.GlobalGateway) (frontdoor.Result, error) {
 	p.reconciles++
 	return p.result, p.reconcileErr

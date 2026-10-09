@@ -285,6 +285,11 @@ func originGroupFromResource(resource Resource) armcdn.AFDOriginGroup {
 			ProbeProtocol:    ptr.To(armcdn.ProbeProtocolHTTP),
 			ProbeRequestType: ptr.To(armcdn.HealthProbeRequestTypeGET),
 		},
+		LoadBalancingSettings: &armcdn.LoadBalancingSettingsParameters{
+			AdditionalLatencyInMilliseconds: ptr.To[int32](0),
+			SampleSize:                      ptr.To[int32](4),
+			SuccessfulSamplesRequired:       ptr.To[int32](3),
+		},
 	}}
 }
 

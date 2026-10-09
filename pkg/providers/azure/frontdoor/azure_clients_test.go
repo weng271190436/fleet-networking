@@ -36,6 +36,23 @@ func TestOriginSDKConversion_PreservesPrivateLink(t *testing.T) {
 	}
 }
 
+func TestOriginGroupSDKConversion_SetsRequiredLoadBalancingDefaults(t *testing.T) {
+	sdk := originGroupFromResource(Resource{HealthProbePath: "/healthz"})
+	if sdk.Properties == nil || sdk.Properties.LoadBalancingSettings == nil {
+		t.Fatal("origin group load balancing settings = nil, want required defaults")
+	}
+	settings := sdk.Properties.LoadBalancingSettings
+	if settings.SampleSize == nil || *settings.SampleSize != 4 {
+		t.Errorf("SampleSize = %v, want 4", settings.SampleSize)
+	}
+	if settings.SuccessfulSamplesRequired == nil || *settings.SuccessfulSamplesRequired != 3 {
+		t.Errorf("SuccessfulSamplesRequired = %v, want 3", settings.SuccessfulSamplesRequired)
+	}
+	if settings.AdditionalLatencyInMilliseconds == nil || *settings.AdditionalLatencyInMilliseconds != 0 {
+		t.Errorf("AdditionalLatencyInMilliseconds = %v, want 0", settings.AdditionalLatencyInMilliseconds)
+	}
+}
+
 func TestSecurityPolicySDKConversion_PreservesReadOnlyWAFReference(t *testing.T) {
 	resource := Resource{
 		Name:        "security-global",

@@ -575,13 +575,31 @@ func setGatewayProgrammed(gateway *gatewayv1.Gateway, status metav1.ConditionSta
 }
 
 func setListeners(gateway *gatewayv1.Gateway, status metav1.ConditionStatus, reason, message string, attached int32) {
+	existing := make(map[gatewayv1.SectionName][]metav1.Condition, len(gateway.Status.Listeners))
+	for i := range gateway.Status.Listeners {
+		existing[gateway.Status.Listeners[i].Name] = append(
+			[]metav1.Condition(nil),
+			gateway.Status.Listeners[i].Conditions...,
+		)
+	}
 	gateway.Status.Listeners = make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
 	for _, listener := range gateway.Spec.Listeners {
-		conditions := []metav1.Condition{
-			{Type: string(gatewayv1.ListenerConditionAccepted), Status: status, Reason: reason, Message: message, ObservedGeneration: gateway.Generation},
-			{Type: string(gatewayv1.ListenerConditionProgrammed), Status: status, Reason: reason, Message: message, ObservedGeneration: gateway.Generation},
-			{Type: string(gatewayv1.ListenerConditionResolvedRefs), Status: status, Reason: conditionReason(status == metav1.ConditionTrue, string(gatewayv1.ListenerReasonResolvedRefs), string(gatewayv1.ListenerReasonInvalidRouteKinds)), Message: message, ObservedGeneration: gateway.Generation},
-		}
+		conditions := existing[listener.Name]
+		meta.SetStatusCondition(&conditions, metav1.Condition{
+			Type: string(gatewayv1.ListenerConditionAccepted), Status: status, Reason: reason,
+			Message: message, ObservedGeneration: gateway.Generation,
+		})
+		meta.SetStatusCondition(&conditions, metav1.Condition{
+			Type: string(gatewayv1.ListenerConditionProgrammed), Status: status, Reason: reason,
+			Message: message, ObservedGeneration: gateway.Generation,
+		})
+		meta.SetStatusCondition(&conditions, metav1.Condition{
+			Type: string(gatewayv1.ListenerConditionResolvedRefs), Status: status,
+			Reason: conditionReason(status == metav1.ConditionTrue,
+				string(gatewayv1.ListenerReasonResolvedRefs),
+				string(gatewayv1.ListenerReasonInvalidRouteKinds)),
+			Message: message, ObservedGeneration: gateway.Generation,
+		})
 		gateway.Status.Listeners = append(gateway.Status.Listeners, gatewayv1.ListenerStatus{
 			Name: listener.Name, SupportedKinds: []gatewayv1.RouteGroupKind{{Group: groupPtr(gatewayv1.GroupName), Kind: "HTTPRoute"}},
 			AttachedRoutes: attached, Conditions: conditions,
