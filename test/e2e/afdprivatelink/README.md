@@ -149,114 +149,818 @@ export AFD_PLS_E2E_APPROVED=true
 
 Every mutating entry point rejects any value other than the exact lowercase string `true`.
 
-## 6. Run the seven resumable setup stages
+## 6. Run the seven literal setup stages
 
-Run one numbered target at a time. This is the recommended workflow for both a new run and a
-resume. Every target is **MUTATING**, requires `AFD_PLS_E2E_APPROVED=true`, recomputes all names
-from the current run ID, validates the exact subscription/tags/state and all prerequisites before
-its first mutation, upserts state, preserves the environment on failure, and prints the next
-command. A completed stage can be rerun safely with the same run ID.
+These copy/paste commands are the authoritative setup workflow. Run them in order in one Bash
+shell. On a retry, reinitialize the shell, repeat the **READ ONLY** part of the failed subsection,
+and run only its necessary conditional **MUTATING** commands. The stage scripts and Make targets
+are secondary reference implementations; they are listed in Appendix A.
 
-| Stage | Command | Azure mutation | Kubernetes mutation |
-|---|---|---|---|
-| 01 | `make phase7-e2e-step-01-registry-images` | create/reuse tagged RG and Basic ACR; push four images | none |
-| 02 | `make phase7-e2e-step-02-network` | create VNet only if absent; create only absent subnets; optionally restore tags on the exact state-recorded legacy VNet | none |
-| 03 | `make phase7-e2e-step-03-aks` | create only absent AKS clusters; tag exact AKS node RGs | none |
-| 04 | `make phase7-e2e-step-04-identities-rbac-kubeconfig` | create/reuse identities, federations, and exact scoped assignments; read AKS credentials | local kubeconfig only |
-| 05 | `make phase7-e2e-step-05-crds-registration` | none | apply CRDs, namespaces, Azure-principal registration, and `MemberCluster`s |
-| 06 | `make phase7-e2e-step-06-waf-manifests` | create/reuse exact WAF policy/rule | read hub connection data only; render local manifests |
-| 07 | `make phase7-e2e-step-07-deploy-join` | read assignments only; controllers later own AFD | apply workloads, wait for controllers, create `InternalMemberCluster`s, wait heartbeat, patch joined status |
-
-### 6.1 Registry and immutable images
+Initialize deterministic names, paths, state, tags, and a context-aware kubectl helper. These
+operations are local only:
 
 ```bash
-make phase7-e2e-step-01-registry-images
-jq '.images' ".phase7-${AFD_PLS_E2E_RUN_ID}.state.json"
+source test/e2e/afdprivatelink/scripts/common.sh
+initialize_names
+validate_subscription
+initialize_state
+tags=("source=${SOURCE_TAG}" "phase=7" "run-id=${AFD_PLS_E2E_RUN_ID}")
+k() {
+  local context="$1"
+  shift
+  kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" --context "$context" "$@"
+}
+test "${AZURE_SUBSCRIPTION_ID:-}" = "$EXPECTED_SUBSCRIPTION_ID"
+test "${AFD_PLS_E2E_APPROVED:-}" = true
 ```
 
-Expected: five non-empty digest-pinned image references. Existing ACRs are reused only when the
-resource group, `Basic` SKU, `source`, and `run-id` match; images are rebuilt/pushed on rerun.
+### 6.1 Stage 01 — tagged resource group, registry, and immutable images
 
-### 6.2 Network
+**READ ONLY — inspect before creating anything:**
 
 ```bash
-make phase7-e2e-step-02-network
-az network vnet subnet list -g "fleet-afd-pls-${AFD_PLS_E2E_RUN_ID}" \
-  --vnet-name "afd-vnet-${AFD_PLS_E2E_RUN_ID}" \
+az group show --name "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  --query '{name:name,location:location,tags:tags}' -o json 2>/dev/null || true
+az acr show --name "$AFD_PLS_E2E_ACR" \
+  --query '{name:name,resourceGroup:resourceGroup,sku:sku.name,loginServer:loginServer,tags:tags}' \
+  -o json 2>/dev/null || true
+docker info >/dev/null
+docker buildx version
+```
+
+Expected: absent resources print nothing. Retained resources must be in the deterministic RG and
+have `source=fleet-networking-afd-pls-e2e`, `phase=7`, and the current `run-id`; a retained ACR
+must use `Basic`.
+
+**MUTATING — conditionally create the RG/ACR, log in, and build/push all four images:**
+
+```bash
+test "$AFD_PLS_E2E_APPROVED" = true
+if az group show --name "$AFD_PLS_E2E_RESOURCE_GROUP" --output none 2>/dev/null; then
+  validate_resource_group_boundary
+else
+  az group create --name "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --location "$AFD_PLS_E2E_LOCATION" --tags "${tags[@]}" --output none
+fi
+resource_group_id="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_RESOURCE_GROUP}"
+record_resource resourceGroup "$AFD_PLS_E2E_RESOURCE_GROUP" "$resource_group_id"
+
+if acr_json="$(az acr show --name "$AFD_PLS_E2E_ACR" -o json 2>/dev/null)"; then
+  validate_resource_tags "$(jq -r '.tags.source // ""' <<<"$acr_json")" \
+    "$(jq -r '.tags["run-id"] // ""' <<<"$acr_json")" "ACR $AFD_PLS_E2E_ACR"
+  test "$(jq -r '.resourceGroup' <<<"$acr_json")" = "$AFD_PLS_E2E_RESOURCE_GROUP"
+  test "$(jq -r '.sku.name' <<<"$acr_json")" = Basic
+else
+  az acr create --resource-group "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --name "$AFD_PLS_E2E_ACR" --location "$AFD_PLS_E2E_LOCATION" --sku Basic \
+    --admin-enabled false --tags "${tags[@]}" --output none
+fi
+acr_id="$(az acr show --name "$AFD_PLS_E2E_ACR" --query id -o tsv)"
+acr_login_server="$(az acr show --name "$AFD_PLS_E2E_ACR" --query loginServer -o tsv)"
+record_resource containerRegistry "$AFD_PLS_E2E_ACR" "$acr_id"
+az acr login --name "$AFD_PLS_E2E_ACR" --output none
+
+docker buildx build --file docker/hub-gateway-controller-manager.Dockerfile \
+  --output=type=registry --platform=linux/amd64 --pull \
+  --tag "${acr_login_server}/hub-gateway-controller-manager:${AFD_PLS_E2E_RUN_ID}" \
+  --progress=plain --build-arg GOARCH=amd64 --build-arg GOOS=linux .
+docker buildx build --file docker/member-net-controller-manager.Dockerfile \
+  --output=type=registry --platform=linux/amd64 --pull \
+  --tag "${acr_login_server}/member-net-controller-manager:${AFD_PLS_E2E_RUN_ID}" \
+  --progress=plain --build-arg GOARCH=amd64 --build-arg GOOS=linux .
+docker buildx build --file docker/net-crd-installer.Dockerfile \
+  --output=type=registry --platform=linux/amd64 --pull \
+  --tag "${acr_login_server}/net-crd-installer:${AFD_PLS_E2E_RUN_ID}" \
+  --progress=plain --build-arg GOARCH=amd64 --build-arg GOOS=linux .
+docker buildx build --file test/e2e/afdprivatelink/echo/Dockerfile \
+  --output=type=registry --platform=linux/amd64 --pull \
+  --tag "${acr_login_server}/afd-pls-echo:${AFD_PLS_E2E_RUN_ID}" --progress=plain .
+```
+
+Resolve all five immutable references, including the external refresh-token image, and update
+state:
+
+```bash
+resolve_image() {
+  local repository="$1" digest
+  digest="$(az acr repository show --name "$AFD_PLS_E2E_ACR" \
+    --image "${repository}:${AFD_PLS_E2E_RUN_ID}" --query digest -o tsv)"
+  [[ "$digest" =~ ^sha256:[[:xdigit:]]{64}$ ]]
+  printf '%s/%s@%s' "$acr_login_server" "$repository" "$digest"
+}
+hub_image="$(resolve_image hub-gateway-controller-manager)"
+member_image="$(resolve_image member-net-controller-manager)"
+crd_image="$(resolve_image net-crd-installer)"
+echo_image="$(resolve_image afd-pls-echo)"
+refresh_repo=ghcr.io/azure/fleet/refresh-token
+refresh_digest="$(docker buildx imagetools inspect "${refresh_repo}:v0.1.0" \
+  --format '{{json .Manifest.Digest}}' | tr -d '"')"
+[[ "$refresh_digest" =~ ^sha256:[[:xdigit:]]{64}$ ]]
+jq --arg hub "$hub_image" --arg member "$member_image" --arg crd "$crd_image" \
+  --arg echo "$echo_image" --arg refresh "${refresh_repo}@${refresh_digest}" \
+  '.images = {hubGateway:$hub,member:$member,crdInstaller:$crd,echo:$echo,refreshToken:$refresh}' \
+  "$AFD_PLS_E2E_STATE_FILE" >"${AFD_PLS_E2E_STATE_FILE}.next"
+mv "${AFD_PLS_E2E_STATE_FILE}.next" "$AFD_PLS_E2E_STATE_FILE"
+initialize_names
+```
+
+**READ ONLY — verify before Stage 02:**
+
+```bash
+jq -e '.images | length == 5 and all(.[]; test("@sha256:[0-9a-fA-F]{64}$"))' \
+  "$AFD_PLS_E2E_STATE_FILE"
+az acr repository list --name "$AFD_PLS_E2E_ACR" -o table
+```
+
+Expected: jq prints `true`; the four run-built repositories are listed.
+
+### 6.2 Stage 02 — safe VNet and subnet reuse
+
+**READ ONLY — inspect the VNet and every required subnet:**
+
+```bash
+subnet_specs=(
+  "hub:10.70.0.0/22" "member-1:10.70.4.0/22" "member-2:10.70.8.0/22"
+  "pls-1:10.70.12.0/24" "pls-2:10.70.13.0/24"
+)
+vnet_exists=false
+if vnet_json="$(az network vnet show --resource-group "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  --name "$AFD_PLS_E2E_VNET" -o json 2>/dev/null)"; then
+  vnet_exists=true
+  test "$(jq -r '.addressSpace.addressPrefixes | sort | join(",")' <<<"$vnet_json")" \
+    = "10.70.0.0/16"
+  vnet_source="$(jq -r '.tags.source // ""' <<<"$vnet_json")"
+  vnet_run="$(jq -r '.tags["run-id"] // ""' <<<"$vnet_json")"
+  if [[ -z "$vnet_source" && -z "$vnet_run" ]]; then
+    expected_vnet_id="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_RESOURCE_GROUP}/providers/Microsoft.Network/virtualNetworks/${AFD_PLS_E2E_VNET}"
+    jq -e --arg id "$expected_vnet_id" \
+      'any(.resources[]?; .type=="virtualNetwork" and
+        (.id|ascii_downcase)==($id|ascii_downcase))' "$AFD_PLS_E2E_STATE_FILE"
+    vnet_needs_tags=true
+  else
+    validate_resource_tags "$vnet_source" "$vnet_run" "VNet $AFD_PLS_E2E_VNET"
+    vnet_needs_tags=false
+  fi
+  for spec in "${subnet_specs[@]}"; do
+    name="${spec%%:*}"; prefix="${spec#*:}"
+    if subnet_json="$(az network vnet subnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+      --vnet-name "$AFD_PLS_E2E_VNET" -n "$name" -o json 2>/dev/null)"; then
+      test "$(jq -r '[.addressPrefix // empty,.addressPrefixes[]?] |
+        map(select(length > 0)) | sort | join(",")' <<<"$subnet_json")" = "$prefix"
+      test "$(jq -r '.privateLinkServiceNetworkPolicies' <<<"$subnet_json")" = Disabled
+      printf 'reuse subnet %s (%s)\n' "$name" "$prefix"
+    else
+      printf 'missing subnet %s (%s)\n' "$name" "$prefix"
+    fi
+  done
+else
+  echo "VNet is absent; it may be created below"
+fi
+```
+
+Expected: either the VNet is absent, or its exact address space/tags and every retained subnet's
+prefix/policy validate. Stop on any mismatch. Do not update or delete an existing subnet.
+
+**MUTATING — create only what is absent:**
+
+```bash
+test "$AFD_PLS_E2E_APPROVED" = true
+if [[ "$vnet_exists" == true && "${vnet_needs_tags:-false}" == true ]]; then
+  az network vnet update --resource-group "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --name "$AFD_PLS_E2E_VNET" --tags "${tags[@]}" --output none
+fi
+if [[ "$vnet_exists" == false ]]; then
+  az network vnet create --resource-group "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --name "$AFD_PLS_E2E_VNET" --location "$AFD_PLS_E2E_LOCATION" \
+    --address-prefixes 10.70.0.0/16 --tags "${tags[@]}" --output none
+fi
+for spec in "${subnet_specs[@]}"; do
+  name="${spec%%:*}"; prefix="${spec#*:}"
+  if ! az network vnet subnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --vnet-name "$AFD_PLS_E2E_VNET" -n "$name" --output none 2>/dev/null; then
+    az network vnet subnet create -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+      --vnet-name "$AFD_PLS_E2E_VNET" -n "$name" --address-prefixes "$prefix" \
+      --disable-private-link-service-network-policies true --output none
+  fi
+done
+vnet_id="$(az network vnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "$AFD_PLS_E2E_VNET" --query id -o tsv)"
+record_resource virtualNetwork "$AFD_PLS_E2E_VNET" "$vnet_id"
+for spec in "${subnet_specs[@]}"; do
+  name="${spec%%:*}"
+  subnet_id="$(az network vnet subnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --vnet-name "$AFD_PLS_E2E_VNET" -n "$name" --query id -o tsv)"
+  record_resource subnet "$name" "$subnet_id"
+done
+```
+
+The `az network vnet create` command is reachable only when the preceding `show` proved the VNet
+absent. It must never be run against a retained VNet.
+
+**READ ONLY — verify before Stage 03:**
+
+```bash
+az network vnet subnet list -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  --vnet-name "$AFD_PLS_E2E_VNET" \
   --query '[].{name:name,prefix:addressPrefix,plsPolicy:privateLinkServiceNetworkPolicies}' -o table
 ```
 
-Expected: `hub`, `member-1`, `member-2`, `pls-1`, and `pls-2` with their fixed prefixes and
-`Disabled` PLS network policy. If the VNet exists, the stage **never** invokes
-`az network vnet create`; it validates address space first, validates each existing subnet without
-updating it, and creates only missing subnets.
+Expected: the five exact names/prefixes appear and every PLS policy is `Disabled`.
 
-### 6.3 AKS
+### 6.3 Stage 03 — inspect and conditionally create AKS
+
+**READ ONLY — validate subnets and retained clusters before any cluster creation:**
 
 ```bash
-make phase7-e2e-step-03-aks
-az aks list -g "fleet-afd-pls-${AFD_PLS_E2E_RUN_ID}" \
+cluster_specs=(
+  "$AFD_PLS_E2E_HUB_CLUSTER:hub:$AFD_PLS_E2E_HUB_NODE_RESOURCE_GROUP"
+  "$AFD_PLS_E2E_MEMBER1_CLUSTER:member-1:$AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP"
+  "$AFD_PLS_E2E_MEMBER2_CLUSTER:member-2:$AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP"
+)
+validate_cluster() {
+  local cluster="$1" subnet="$2" node_rg="$3" json pool_subnet
+  json="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" -o json)"
+  validate_resource_tags "$(jq -r '.tags.source // ""' <<<"$json")" \
+    "$(jq -r '.tags["run-id"] // ""' <<<"$json")" "AKS $cluster"
+  test "$(jq -r '.resourceGroup' <<<"$json")" = "$AFD_PLS_E2E_RESOURCE_GROUP"
+  test "$(jq -r '.location' <<<"$json")" = "$AFD_PLS_E2E_LOCATION"
+  test "$(jq -r '.nodeResourceGroup' <<<"$json")" = "$node_rg"
+  test "$(jq -r '.networkProfile.loadBalancerSku' <<<"$json")" = standard
+  test "$(jq -r '.oidcIssuerProfile.enabled' <<<"$json")" = true
+  test "$(jq -r '.workloadIdentityProfile.enabled' <<<"$json")" = true
+  test "$(az aks nodepool show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --cluster-name "$cluster" -n nodepool1 --query vmSize -o tsv)" = Standard_D2as_v4
+  pool_subnet="$(az aks nodepool show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --cluster-name "$cluster" -n nodepool1 --query vnetSubnetId -o tsv)"
+  test "${pool_subnet,,}" = "${vnet_id,,}/subnets/${subnet}"
+}
+for spec in "${cluster_specs[@]}"; do
+  cluster="${spec%%:*}"; rest="${spec#*:}"; subnet="${rest%%:*}"; node_rg="${rest#*:}"
+  az network vnet subnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --vnet-name "$AFD_PLS_E2E_VNET" -n "$subnet" --output none
+  if az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" --output none 2>/dev/null; then
+    validate_cluster "$cluster" "$subnet" "$node_rg"
+    az group show --name "$node_rg" --output none
+    node_source="$(az group show --name "$node_rg" --query tags.source -o tsv)"
+    node_run="$(az group show --name "$node_rg" --query 'tags."run-id"' -o tsv)"
+    if [[ -n "$node_source" || -n "$node_run" ]]; then
+      validate_resource_tags "$node_source" "$node_run" "node resource group $node_rg"
+    fi
+  else
+    printf 'missing AKS %s\n' "$cluster"
+  fi
+done
+```
+
+Expected: each retained cluster validates exactly; missing clusters are named.
+
+**MUTATING — create only missing clusters, then record clusters and identities:**
+
+```bash
+test "$AFD_PLS_E2E_APPROVED" = true
+for spec in "${cluster_specs[@]}"; do
+  cluster="${spec%%:*}"; rest="${spec#*:}"; subnet="${rest%%:*}"; node_rg="${rest#*:}"
+  if ! az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" --output none 2>/dev/null; then
+    az aks create -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" \
+      --location "$AFD_PLS_E2E_LOCATION" --node-count 1 --node-vm-size Standard_D2as_v4 \
+      --network-plugin azure --load-balancer-sku standard \
+      --vnet-subnet-id "${vnet_id}/subnets/${subnet}" --enable-managed-identity \
+      --enable-oidc-issuer --enable-workload-identity --attach-acr "$AFD_PLS_E2E_ACR" \
+      --node-resource-group "$node_rg" --generate-ssh-keys --tags "${tags[@]}" --output none
+  fi
+  validate_cluster "$cluster" "$subnet" "$node_rg"
+  cluster_json="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" -o json)"
+  record_resource managedCluster "$cluster" "$(jq -r '.id' <<<"$cluster_json")"
+  record_identity "${cluster}-control-plane" "" "$(jq -r '.identity.principalId' <<<"$cluster_json")" \
+    "$(jq -r '.id' <<<"$cluster_json")"
+  record_identity "${cluster}-kubelet" \
+    "$(jq -r '.identityProfile.kubeletidentity.clientId' <<<"$cluster_json")" \
+    "$(jq -r '.identityProfile.kubeletidentity.objectId' <<<"$cluster_json")" \
+    "$(jq -r '.identityProfile.kubeletidentity.resourceId' <<<"$cluster_json")"
+  node_source="$(az group show -n "$node_rg" --query tags.source -o tsv)"
+  node_run="$(az group show -n "$node_rg" --query 'tags."run-id"' -o tsv)"
+  if [[ -z "$node_source" && -z "$node_run" ]]; then
+    az group update -n "$node_rg" --tags "${tags[@]}" --output none
+  else
+    validate_resource_tags "$node_source" "$node_run" "node resource group $node_rg"
+  fi
+  validate_tagged_resource_group "$node_rg"
+  record_resource nodeResourceGroup "$node_rg" "$(az group show -n "$node_rg" --query id -o tsv)"
+done
+```
+
+**READ ONLY — verify before Stage 04:**
+
+```bash
+az aks list -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   --query '[].{name:name,nodeResourceGroup:nodeResourceGroup,power:powerState.code}' -o table
 ```
 
-Expected: the exact hub and two member clusters are `Running`. Existing clusters are reused only
-after tag, primary RG, node RG, subnet, `Standard_D2as_v4`, Standard LB, OIDC, and workload
-identity validation; no cluster is recreated.
+Expected: exactly the hub and two members are `Running` with their deterministic node RGs.
 
-### 6.4 Identities, RBAC, and kubeconfig
+### 6.4 Stage 04 — identities, federations, scoped RBAC, and contexts
 
-```bash
-make phase7-e2e-step-04-identities-rbac-kubeconfig
-KUBECONFIG=".phase7-${AFD_PLS_E2E_RUN_ID}.kubeconfig" kubectl config get-contexts
-```
-
-Expected: exact `phase7-...-hub`, `...-member-1`, and `...-member-2` contexts. Existing tagged
-identities, exact issuer/subject/audience federations, and exact principal/role/scope assignments
-are reused and state entries are replaced by logical key rather than appended.
-
-### 6.5 CRDs and registration
+**READ ONLY — inspect retained identities, federations, roles, and cluster issuers:**
 
 ```bash
-make phase7-e2e-step-05-crds-registration
-kubectl --kubeconfig ".phase7-${AFD_PLS_E2E_RUN_ID}.kubeconfig" \
-  --context "phase7-${AFD_PLS_E2E_RUN_ID}-hub" get memberclusters
+identity_specs=(
+  "hub_gateway:afd-hub-id-${AFD_PLS_E2E_RUN_ID}:$AFD_PLS_E2E_HUB_CLUSTER:hub-gateway-controller-manager"
+  "member_1:afd-m1-id-${AFD_PLS_E2E_RUN_ID}:$AFD_PLS_E2E_MEMBER1_CLUSTER:member-net-controller-manager-sa"
+  "member_2:afd-m2-id-${AFD_PLS_E2E_RUN_ID}:$AFD_PLS_E2E_MEMBER2_CLUSTER:member-net-controller-manager-sa"
+)
+federation_name="fleet-system-${AFD_PLS_E2E_RUN_ID}"
+for spec in "${identity_specs[@]}"; do
+  IFS=: read -r key name cluster service_account <<<"$spec"
+  az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" \
+    --query '{name:name,issuer:oidcIssuerProfile.issuerUrl}' -o table
+  if json="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$name" -o json 2>/dev/null)"; then
+    validate_resource_tags "$(jq -r '.tags.source // ""' <<<"$json")" \
+      "$(jq -r '.tags["run-id"] // ""' <<<"$json")" "identity $name"
+    test "$(jq -r '.location' <<<"$json")" = "$AFD_PLS_E2E_LOCATION"
+    az identity federated-credential show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+      --identity-name "$name" -n "$federation_name" -o json 2>/dev/null || true
+  else
+    printf 'missing identity %s\n' "$name"
+  fi
+done
+hub_role_id="$(az role definition list --name Contributor --query '[0].name' -o tsv)"
+member_role_id="$(az role definition list --name 'Network Contributor' --query '[0].name' -o tsv)"
+test -n "$hub_role_id"; test -n "$member_role_id"
 ```
 
-Expected: both exact member names exist. This stage intentionally does **not** create
-`InternalMemberCluster`s; networking controllers are not deployed yet.
+Expected: retained identities have exact tags/location. Any retained federation must have the
+cluster issuer, `system:serviceaccount:fleet-system:<service-account>` subject, and
+`api://AzureADTokenExchange` audience.
 
-### 6.6 WAF and manifests
+**MUTATING — conditionally create identities and exact federations:**
 
 ```bash
-make phase7-e2e-step-06-waf-manifests
-grep -R 'image:' ".phase7-${AFD_PLS_E2E_RUN_ID}" | grep -v '@sha256:' && exit 1 || true
+test "$AFD_PLS_E2E_APPROVED" = true
+for spec in "${identity_specs[@]}"; do
+  IFS=: read -r key name cluster service_account <<<"$spec"
+  if ! az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$name" --output none 2>/dev/null; then
+    az identity create -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$name" \
+      --location "$AFD_PLS_E2E_LOCATION" --tags "${tags[@]}" --output none
+  fi
+  json="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$name" -o json)"
+  client_id="$(jq -r '.clientId' <<<"$json")"; principal_id="$(jq -r '.principalId' <<<"$json")"
+  record_identity "$name" "$client_id" "$principal_id" "$(jq -r '.id' <<<"$json")"
+  printf -v "${key}_client_id" '%s' "$client_id"
+  printf -v "${key}_principal_id" '%s' "$principal_id"
+  issuer="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" \
+    --query oidcIssuerProfile.issuerUrl -o tsv)"
+  subject="system:serviceaccount:fleet-system:${service_account}"
+  if fed="$(az identity federated-credential show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --identity-name "$name" -n "$federation_name" -o json 2>/dev/null)"; then
+    test "$(jq -r '.issuer' <<<"$fed")" = "$issuer"
+    test "$(jq -r '.subject' <<<"$fed")" = "$subject"
+    test "$(jq -r '.audiences | sort | join(",")' <<<"$fed")" = api://AzureADTokenExchange
+  else
+    az identity federated-credential create -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+      --identity-name "$name" -n "$federation_name" --issuer "$issuer" \
+      --subject "$subject" --audiences api://AzureADTokenExchange --output none
+  fi
+  fed_id="$(az identity federated-credential show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --identity-name "$name" -n "$federation_name" --query id -o tsv)"
+  record_resource federatedCredential "${name}/${federation_name}" "$fed_id"
+done
 ```
 
-Expected: the command prints the step-07 next command and no non-digest workload image line.
-This stage renders files only; it does not apply Kubernetes manifests.
-
-### 6.7 Deploy, wait, then join
+Create missing assignments only at the approved RG scopes:
 
 ```bash
-make phase7-e2e-step-07-deploy-join
-kubectl --kubeconfig ".phase7-${AFD_PLS_E2E_RUN_ID}.kubeconfig" \
-  --context "phase7-${AFD_PLS_E2E_RUN_ID}-hub" get memberclusters
+ensure_assignment() {
+  local principal="$1" role_id="$2" scope="$3" logical_name="$4" matches assignment_id
+  matches="$(az role assignment list --assignee-object-id "$principal" --scope "$scope" -o json |
+    jq --arg role "$role_id" --arg scope "$scope" \
+      '[.[] | select((.roleDefinitionId | ascii_downcase | endswith("/" + ($role|ascii_downcase)))
+        and (.scope|ascii_downcase) == ($scope|ascii_downcase))]')"
+  test "$(jq 'length' <<<"$matches")" -le 1
+  if test "$(jq 'length' <<<"$matches")" -eq 0; then
+    matches="$(az role assignment create --assignee-object-id "$principal" \
+      --assignee-principal-type ServicePrincipal --role "$role_id" --scope "$scope" -o json)"
+    assignment_id="$(jq -r '.id' <<<"$matches")"
+  else
+    assignment_id="$(jq -r '.[0].id' <<<"$matches")"
+  fi
+  record_role_assignment "$logical_name" "$principal" "$role_id" "$scope" "$assignment_id"
+}
+primary_scope="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_RESOURCE_GROUP}"
+ensure_assignment "$hub_gateway_principal_id" "$hub_role_id" "$primary_scope" hub-afd
+ensure_assignment "$member_1_principal_id" "$member_role_id" \
+  "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" member-1-pls
+ensure_assignment "$member_2_principal_id" "$member_role_id" \
+  "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" member-2-pls
 ```
 
-Expected: controller/echo Deployments become Available before `InternalMemberCluster` join
-requests are created; both networking-agent heartbeats are observed before joined status is
-patched.
-
-### Optional sequential wrapper
-
-For a brand-new unattended run only, the old target remains as a thin sequential wrapper:
+`az aks get-credentials` changes only the run-scoped local kubeconfig:
 
 ```bash
-make phase7-e2e-setup
+for spec in \
+  "$AFD_PLS_E2E_HUB_CLUSTER:$AFD_PLS_E2E_HUB_CONTEXT" \
+  "$AFD_PLS_E2E_MEMBER1_CLUSTER:$AFD_PLS_E2E_MEMBER1_CONTEXT" \
+  "$AFD_PLS_E2E_MEMBER2_CLUSTER:$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
+  cluster="${spec%%:*}"; context="${spec#*:}"
+  az aks get-credentials -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" --admin \
+    --file "$AFD_PLS_E2E_KUBECONFIG" --context "$context" --overwrite-existing
+  if kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts \
+    "${context}-admin" --no-headers >/dev/null 2>&1; then
+    kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config rename-context \
+      "${context}-admin" "$context"
+  fi
+done
 ```
 
-It is **not recommended** for debugging or resuming because it starts again at image publication.
-It never performs automatic cleanup.
+**READ ONLY — verify before Stage 05:**
+
+```bash
+kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts
+jq '.identities,.roleAssignments' "$AFD_PLS_E2E_STATE_FILE"
+```
+
+Expected: all three exact contexts, controller identities, and three scoped assignments appear.
+
+### 6.5 Stage 05 — pinned CRDs and Fleet registration
+
+**READ ONLY — resolve pinned inputs, principals, and verify APIs:**
+
+```bash
+module_cache="$(go env GOMODCACHE)"
+fleet_crd_dir="${module_cache}/go.goms.io/fleet@v0.14.0/config/crd/bases"
+gateway_crd_dir="${module_cache}/sigs.k8s.io/gateway-api@v1.2.1/config/crd/standard"
+test -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_memberclusters.yaml"
+test -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_internalmemberclusters.yaml"
+test -f "${gateway_crd_dir}/gateway.networking.k8s.io_gateways.yaml"
+for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
+  "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
+  k "$context" get --raw=/readyz
+done
+member_1_principal="$(jq -r --arg n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" \
+  '.identities[] | select(.name==$n).principalId' "$AFD_PLS_E2E_STATE_FILE")"
+member_2_principal="$(jq -r --arg n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" \
+  '.identities[] | select(.name==$n).principalId' "$AFD_PLS_E2E_STATE_FILE")"
+test -n "$member_1_principal"; test -n "$member_2_principal"
+```
+
+Expected: every `/readyz` returns `ok`, pinned files exist, and both principals are non-empty.
+
+**MUTATING — apply namespaces and pinned CRDs:**
+
+```bash
+test "$AFD_PLS_E2E_APPROVED" = true
+for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
+  "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
+  k "$context" create namespace fleet-system --dry-run=client -o yaml | k "$context" apply -f -
+done
+k "$AFD_PLS_E2E_HUB_CONTEXT" apply --server-side --field-manager=phase7-e2e \
+  -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_memberclusters.yaml" \
+  -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_internalmemberclusters.yaml" \
+  -f "$gateway_crd_dir"
+for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
+  "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
+  k "$context" apply --server-side --field-manager=phase7-e2e -f config/crd/bases
+done
+```
+
+Render the existing getting-started chart with both Azure principals, apply it, and create only
+`MemberCluster`s. Do not create `InternalMemberCluster`s yet:
+
+```bash
+registration_manifest="${AFD_PLS_E2E_ARTIFACT_DIR}/hub-member-registration.yaml"
+HELM_NO_PLUGINS=1 helm template phase7-registration examples/getting-started/charts/hub \
+  --namespace fleet-system --set-string userNS=afd-pls-e2e \
+  --set-string memberClusterConfigs[0].memberID="$AFD_PLS_E2E_MEMBER1_CLUSTER" \
+  --set-string memberClusterConfigs[0].principalID="$member_1_principal" \
+  --set-string memberClusterConfigs[1].memberID="$AFD_PLS_E2E_MEMBER2_CLUSTER" \
+  --set-string memberClusterConfigs[1].principalID="$member_2_principal" \
+  >"$registration_manifest"
+k "$AFD_PLS_E2E_HUB_CONTEXT" apply --server-side --field-manager=phase7-e2e \
+  -f "$registration_manifest"
+for item in \
+  "$AFD_PLS_E2E_MEMBER1_CLUSTER:$member_1_principal" \
+  "$AFD_PLS_E2E_MEMBER2_CLUSTER:$member_2_principal"; do
+  member="${item%%:*}"; principal="${item#*:}"
+  cat <<EOF | k "$AFD_PLS_E2E_HUB_CONTEXT" apply -f -
+apiVersion: cluster.kubernetes-fleet.io/v1beta1
+kind: MemberCluster
+metadata:
+  name: ${member}
+  labels:
+    networking.fleet.azure.com/afd-poc: "true"
+spec:
+  identity:
+    apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: ${principal}
+EOF
+done
+```
+
+**READ ONLY — verify before Stage 06:**
+
+```bash
+k "$AFD_PLS_E2E_HUB_CONTEXT" get memberclusters
+test "$(k "$AFD_PLS_E2E_HUB_CONTEXT" get internalmemberclusters -A \
+  --no-headers 2>/dev/null | wc -l)" -eq 0
+```
+
+Expected: both MemberClusters exist and no IMC exists.
+
+### 6.6 Stage 06 — WAF and digest-only manifests
+
+**READ ONLY — inspect retained WAF objects and rendering inputs:**
+
+```bash
+waf_json="$(az network front-door waf-policy show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "$AFD_PLS_E2E_WAF_POLICY" -o json 2>/dev/null || true)"
+if [[ -n "$waf_json" ]]; then
+  validate_resource_tags "$(jq -r '.tags.source // ""' <<<"$waf_json")" \
+    "$(jq -r '.tags["run-id"] // ""' <<<"$waf_json")" "WAF $AFD_PLS_E2E_WAF_POLICY"
+  test "$(jq -r '.sku.name' <<<"$waf_json")" = Premium_AzureFrontDoor
+  test "$(jq -r '.policySettings.mode' <<<"$waf_json")" = Prevention
+fi
+rule_json="$(az network front-door waf-policy rule show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  --policy-name "$AFD_PLS_E2E_WAF_POLICY" -n BlockPOCHeader -o json 2>/dev/null || true)"
+if [[ -n "$rule_json" ]]; then
+  test "$(jq -r '.priority' <<<"$rule_json")" = 1
+  test "$(jq -r '.action' <<<"$rule_json")" = Block
+fi
+jq -e '.images | length == 5 and all(.[]; contains("@sha256:"))' "$AFD_PLS_E2E_STATE_FILE"
+```
+
+Expected: absent WAF objects print nothing; retained objects validate exactly; image check is true.
+
+**MUTATING — conditionally create the WAF policy and rule:**
+
+```bash
+test "$AFD_PLS_E2E_APPROVED" = true
+if [[ -z "$waf_json" ]]; then
+  az network front-door waf-policy create -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    -n "$AFD_PLS_E2E_WAF_POLICY" --sku Premium_AzureFrontDoor --mode Prevention \
+    --location Global --tags "${tags[@]}" --output none
+fi
+if [[ -z "$rule_json" ]]; then
+  az network front-door waf-policy rule create -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+    --policy-name "$AFD_PLS_E2E_WAF_POLICY" -n BlockPOCHeader --priority 1 \
+    --rule-type MatchRule --action Block --match-variable RequestHeader.X-POC-Block \
+    --operator Equal --values true --output none
+fi
+waf_id="$(az network front-door waf-policy show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
+  -n "$AFD_PLS_E2E_WAF_POLICY" --query id -o tsv)"
+record_resource wafPolicy "$AFD_PLS_E2E_WAF_POLICY" "$waf_id"
+```
+
+Rendering below is local-only. Load identity, cluster, and immutable-image values:
+
+```bash
+tenant_id="$(az account show --query tenantId -o tsv)"
+hub_client="$(jq -r --arg n "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" \
+  '.identities[] | select(.name==$n).clientId' "$AFD_PLS_E2E_STATE_FILE")"
+member_1_client="$(jq -r --arg n "afd-m1-id-${AFD_PLS_E2E_RUN_ID}" \
+  '.identities[] | select(.name==$n).clientId' "$AFD_PLS_E2E_STATE_FILE")"
+member_2_client="$(jq -r --arg n "afd-m2-id-${AFD_PLS_E2E_RUN_ID}" \
+  '.identities[] | select(.name==$n).clientId' "$AFD_PLS_E2E_STATE_FILE")"
+hub_server="$(k "$AFD_PLS_E2E_HUB_CONTEXT" config view --raw --minify \
+  -o jsonpath='{.clusters[0].cluster.server}')"
+hub_ca="$(k "$AFD_PLS_E2E_HUB_CONTEXT" config view --raw --minify \
+  -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+hub_image="$(jq -r '.images.hubGateway' "$AFD_PLS_E2E_STATE_FILE")"
+member_image="$(jq -r '.images.member' "$AFD_PLS_E2E_STATE_FILE")"
+crd_image="$(jq -r '.images.crdInstaller' "$AFD_PLS_E2E_STATE_FILE")"
+echo_image="$(jq -r '.images.echo' "$AFD_PLS_E2E_STATE_FILE")"
+refresh_image="$(jq -r '.images.refreshToken' "$AFD_PLS_E2E_STATE_FILE")"
+hub_repo="${hub_image%@*}"; hub_digest="${hub_image##*@}"
+member_repo="${member_image%@*}"; member_digest="${member_image##*@}"
+crd_repo="${crd_image%@*}"; crd_digest="${crd_image##*@}"
+refresh_repo="${refresh_image%@*}"; refresh_digest="${refresh_image##*@}"
+```
+
+Render the hub and both member charts with exact digest fields:
+
+```bash
+HELM_NO_PLUGINS=1 helm template phase7 charts/hub-gateway-controller-manager \
+  --namespace fleet-system --set-string image.repository="$hub_repo" \
+  --set-string image.digest="$hub_digest" --set-string crdInstaller.image.repository="$crd_repo" \
+  --set-string crdInstaller.image.digest="$crd_digest" --set-string azure.clientId="$hub_client" \
+  --set-string azure.tenantId="$tenant_id" --set-string azure.subscriptionId="$EXPECTED_SUBSCRIPTION_ID" \
+  --set-string azure.resourceGroup="$AFD_PLS_E2E_RESOURCE_GROUP" \
+  --set-string azure.location="$AFD_PLS_E2E_LOCATION" >"$AFD_PLS_E2E_HUB_MANIFEST"
+
+render_member() {
+  local manifest="$1" member="$2" client="$3" node_rg="$4"
+  HELM_NO_PLUGINS=1 helm template phase7 charts/member-net-controller-manager \
+    --namespace fleet-system --set-string fullnameOverride=member-net-controller-manager \
+    --set-string image.repository="$member_repo" --set-string image.digest="$member_digest" \
+    --set crdInstaller.enabled=true --set-string crdInstaller.image.repository="$crd_repo" \
+    --set-string crdInstaller.image.digest="$crd_digest" --set crdInstaller.isE2ETest=true \
+    --set-string config.hubURL="$hub_server" --set-string config.hubCA="$hub_ca" \
+    --set-string config.memberClusterName="$member" --set-string config.provider=azure \
+    --set-string refreshtoken.repository="$refresh_repo" --set-string refreshtoken.digest="$refresh_digest" \
+    --set-string resources.requests.cpu=25m --set-string resources.requests.memory=64Mi \
+    --set tlsClientInsecure=false --set-string azure.clientid="$client" \
+    --set azure.workloadIdentityEnabled=true --set enableTrafficManagerFeature=false \
+    --set enableAFDPrivateLinkFeature=true \
+    --set-string afdRequesterSubscriptionAllowlist="$EXPECTED_SUBSCRIPTION_ID" \
+    --set-string azureCloudConfig.tenantId="$tenant_id" \
+    --set-string azureCloudConfig.subscriptionId="$EXPECTED_SUBSCRIPTION_ID" \
+    --set-string azureCloudConfig.aadClientId="$client" \
+    --set azureCloudConfig.useFederatedWorkloadIdentityExtension=true \
+    --set-string azureCloudConfig.resourceGroup="$node_rg" \
+    --set-string azureCloudConfig.location="$AFD_PLS_E2E_LOCATION" >"$manifest"
+}
+render_member "$AFD_PLS_E2E_MEMBER1_MANIFEST" "$AFD_PLS_E2E_MEMBER1_CLUSTER" \
+  "$member_1_client" "$AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP"
+render_member "$AFD_PLS_E2E_MEMBER2_MANIFEST" "$AFD_PLS_E2E_MEMBER2_CLUSTER" \
+  "$member_2_client" "$AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP"
+```
+
+Append each echo workload and internal Service. This is still local rendering, not an apply:
+
+```bash
+append_echo() {
+  local manifest="$1" member="$2" subnet="$3"
+  cat >>"$manifest" <<EOF
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: afd-pls-e2e}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: echo, namespace: afd-pls-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: echo}}
+  template:
+    metadata: {labels: {app: echo}}
+    spec:
+      containers:
+      - name: echo
+        image: ${echo_image}
+        env: [{name: MEMBER_NAME, value: "${member}"}]
+        ports: [{containerPort: 8080}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: afd-pls-e2e
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-pls-create: "true"
+    service.beta.kubernetes.io/azure-pls-ip-configuration-subnet: "${subnet}"
+    service.beta.kubernetes.io/azure-pls-visibility: "${EXPECTED_SUBSCRIPTION_ID}"
+spec:
+  type: LoadBalancer
+  selector: {app: echo}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+EOF
+}
+append_echo "$AFD_PLS_E2E_MEMBER1_MANIFEST" member-1 pls-1
+append_echo "$AFD_PLS_E2E_MEMBER2_MANIFEST" member-2 pls-2
+```
+
+Append the Gateway API resources:
+
+```bash
+cat >>"$AFD_PLS_E2E_HUB_MANIFEST" <<EOF
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: afd-pls-e2e}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata: {name: azure-fleet-afd}
+spec: {controllerName: networking.fleet.azure.com/afd}
+---
+apiVersion: networking.fleet.azure.com/v1alpha1
+kind: MultiClusterBackend
+metadata: {name: echo, namespace: afd-pls-e2e}
+spec:
+  service: {name: echo, port: 80}
+  clusterSelector: {matchLabels: {networking.fleet.azure.com/afd-poc: "true"}}
+  healthProbe: {path: /}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: global
+  namespace: afd-pls-e2e
+  annotations:
+    networking.fleet.azure.com/afd-sku: Premium_AzureFrontDoor
+    networking.fleet.azure.com/afd-waf-policy-id: "${waf_id}"
+spec:
+  gatewayClassName: azure-fleet-afd
+  listeners: [{name: http, protocol: HTTP, port: 80}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: echo, namespace: afd-pls-e2e}
+spec:
+  parentRefs: [{name: global}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /}}]
+    backendRefs: [{group: networking.fleet.azure.com, kind: MultiClusterBackend, name: echo}]
+EOF
+```
+
+**READ ONLY — verify before Stage 07:**
+
+```bash
+for manifest in "$AFD_PLS_E2E_HUB_MANIFEST" "$AFD_PLS_E2E_MEMBER1_MANIFEST" \
+  "$AFD_PLS_E2E_MEMBER2_MANIFEST"; do
+  test -s "$manifest"
+  ! grep -E '^[[:space:]]*image:' "$manifest" |
+    grep -Ev '@sha256:[[:xdigit:]]{64}"?[[:space:]]*$'
+done
+```
+
+Expected: all manifests are non-empty and no tag-only workload image is printed.
+
+### 6.7 Stage 07 — apply, wait, then join
+
+**READ ONLY — preconditions:**
+
+```bash
+for manifest in "$AFD_PLS_E2E_HUB_MANIFEST" "$AFD_PLS_E2E_MEMBER1_MANIFEST" \
+  "$AFD_PLS_E2E_MEMBER2_MANIFEST"; do test -s "$manifest"; done
+k "$AFD_PLS_E2E_HUB_CONTEXT" get membercluster "$AFD_PLS_E2E_MEMBER1_CLUSTER"
+k "$AFD_PLS_E2E_HUB_CONTEXT" get membercluster "$AFD_PLS_E2E_MEMBER2_CLUSTER"
+```
+
+Expected: manifests exist and both MemberClusters are readable.
+
+**MUTATING — apply manifests and explicitly wait before creating IMCs:**
+
+```bash
+test "$AFD_PLS_E2E_APPROVED" = true
+k "$AFD_PLS_E2E_HUB_CONTEXT" apply --server-side --field-manager=phase7-e2e \
+  -f "$AFD_PLS_E2E_HUB_MANIFEST"
+k "$AFD_PLS_E2E_MEMBER1_CONTEXT" apply --server-side --field-manager=phase7-e2e \
+  -f "$AFD_PLS_E2E_MEMBER1_MANIFEST"
+k "$AFD_PLS_E2E_MEMBER2_CONTEXT" apply --server-side --field-manager=phase7-e2e \
+  -f "$AFD_PLS_E2E_MEMBER2_MANIFEST"
+k "$AFD_PLS_E2E_HUB_CONTEXT" -n fleet-system wait --for=condition=Available \
+  deployment/hub-gateway-controller-manager --timeout=20m
+for context in "$AFD_PLS_E2E_MEMBER1_CONTEXT" "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
+  k "$context" -n fleet-system wait --for=condition=Available \
+    deployment/member-net-controller-manager --timeout=20m
+  k "$context" -n afd-pls-e2e wait --for=condition=Available deployment/echo --timeout=20m
+done
+```
+
+Create each IMC, wait for a real `ServiceExportImportAgent` heartbeat plus `Joined=True`, and only
+then patch the aggregate MemberCluster condition:
+
+```bash
+join_member() {
+  local member="$1" namespace="fleet-member-${member}" now
+  cat <<EOF | k "$AFD_PLS_E2E_HUB_CONTEXT" apply -f -
+apiVersion: cluster.kubernetes-fleet.io/v1beta1
+kind: InternalMemberCluster
+metadata:
+  name: ${member}
+  namespace: ${namespace}
+spec:
+  state: Join
+  heartbeatPeriodSeconds: 10
+EOF
+  for _ in $(seq 1 60); do
+    if k "$AFD_PLS_E2E_HUB_CONTEXT" -n "$namespace" get internalmembercluster "$member" \
+      -o json | jq -e 'any(.status.agentStatus[]?;
+        .type=="ServiceExportImportAgent" and .lastReceivedHeartbeat!=null and
+        any(.conditions[]?; .type=="Joined" and .status=="True"))' >/dev/null; then
+      now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      k "$AFD_PLS_E2E_HUB_CONTEXT" patch membercluster "$member" --subresource=status \
+        --type=merge -p "{\"status\":{\"conditions\":[{\"type\":\"Joined\",\"status\":\"True\",
+        \"reason\":\"NetworkingAgentJoined\",\"message\":\"Phase 7 networking agent joined through the existing E2E registration path\",
+        \"lastTransitionTime\":\"${now}\"}]}}"
+      return
+    fi
+    sleep 10
+  done
+  echo "networking agent for ${member} did not join within 10 minutes" >&2
+  return 1
+}
+join_member "$AFD_PLS_E2E_MEMBER1_CLUSTER"
+join_member "$AFD_PLS_E2E_MEMBER2_CLUSTER"
+```
+
+**READ ONLY — verify setup before beginning Section 7:**
+
+```bash
+k "$AFD_PLS_E2E_HUB_CONTEXT" get memberclusters
+for member in "$AFD_PLS_E2E_MEMBER1_CLUSTER" "$AFD_PLS_E2E_MEMBER2_CLUSTER"; do
+  k "$AFD_PLS_E2E_HUB_CONTEXT" -n "fleet-member-${member}" get \
+    internalmembercluster "$member" -o json | jq -e 'any(.status.agentStatus[]?;
+      .type=="ServiceExportImportAgent" and .lastReceivedHeartbeat!=null and
+      any(.conditions[]?; .type=="Joined" and .status=="True"))'
+done
+```
+
+Expected: both MemberClusters show joined, and both jq checks print `true`. Phase 7 is still not
+complete; continue with human validation and cleanup.
 
 Generated files are mode-protected and run-scoped:
 
@@ -277,9 +981,8 @@ AKS-created assignments, resource IDs, and RGs. It contains no bearer tokens.
 The member chart uses reduced 25m CPU requests for each controller pod container in this
 single-node validation topology; default production chart requests are unchanged.
 
-If a stage fails, it writes
-`.phase7-${AFD_PLS_E2E_RUN_ID}.results.step-NN-...-failure.log`, preserves all resources, and
-performs no automatic cleanup. Review that file and rerun only the failed numbered target.
+If a literal subsection fails, preserve all resources, inspect the failed command and Section 8,
+then resume at that subsection's **READ ONLY** block. Do not restart from Stage 01.
 
 ### Recovery for retained run `p7-10082105`
 
@@ -288,18 +991,11 @@ the supplied single hub subnet as desired VNet state and attempted to remove `me
 attached to a Kubernetes internal load balancer. Azure correctly returned
 `InUseSubnetCannotBeDeleted`. **Do not delete or detach that subnet.**
 
-After exporting the fixed subscription, run ID, location, and approval variables, the next command
-is:
-
-```bash
-make phase7-e2e-step-02-network
-```
-
-The new network stage reuses the VNet, validates every existing subnet, creates only a genuinely
-absent subnet, and never updates/deletes an in-use subnet. If the legacy VNet has no tags, it adds
-the run tags only when the exact VNet ID is already recorded in this run's state. Any prefix,
-policy, ownership, or tag conflict stops before subnet creation; inspect the diagnostic log rather
-than changing/deleting network resources.
+After exporting the fixed subscription, run ID, location, and approval variables, resume at
+Section 6.2's **READ ONLY** block. It validates the retained VNet and every existing subnet before
+the conditional mutation block creates only genuinely absent subnets. It never updates/deletes an
+in-use subnet. Any prefix, policy, ownership, or tag conflict stops before subnet creation; inspect
+the resource rather than changing or deleting it.
 
 ### Fleet registration limitation
 
@@ -643,29 +1339,22 @@ tracing.
 
 ## 9. Safe reruns and failure recovery
 
-Resume at the failed numbered stage, not at the wrapper. A stage accepts only exact resources that
-match its deterministic name, tags, state, topology, and scope. State resources, identities, role
-assignments, and completed-stage markers are upserted/deduplicated.
-
-```bash
-# MUTATING
-make phase7-e2e-step-NN-...
-```
-
-Each stage checks all of its prerequisites before mutation. A missing prerequisite tells you which
-preceding stage to run. A conflicting existing resource is never replaced; inspect it and resolve
-the ownership/configuration mismatch manually. Never delete an in-use subnet as recovery.
+Resume at the failed literal subsection in Section 6, not at an automation wrapper. Re-source
+`common.sh`, initialize names/state and `k`, then run that subsection's **READ ONLY** block before
+its conditional **MUTATING** block. Exact resources must match deterministic names, tags, state,
+topology, and scope. A conflicting existing resource is never replaced; inspect it and resolve the
+ownership/configuration mismatch manually. Never delete an in-use subnet as recovery.
 
 Common fixes:
 
-- missing image state or ACR: rerun step 01;
-- missing/wrong subnet: rerun step 02 only when absent; a wrong existing prefix/policy requires
+- missing image state or ACR: resume at Section 6.1;
+- missing/wrong subnet: resume at Section 6.2 only when absent; a wrong existing prefix/policy requires
   investigation, not an update;
-- missing AKS cluster: rerun step 03; an existing topology mismatch is a hard stop;
-- missing identity/context: rerun step 04;
-- missing CRD/MemberCluster: rerun step 05;
-- stale/missing manifests: rerun step 06, then step 07;
-- controller timeout: inspect the stage diagnostic log and pod events/logs, then rerun step 07.
+- missing AKS cluster: resume at Section 6.3; an existing topology mismatch is a hard stop;
+- missing identity/context: resume at Section 6.4;
+- missing CRD/MemberCluster: resume at Section 6.5;
+- stale/missing manifests: resume at Section 6.6, then Section 6.7;
+- controller timeout: inspect pod events/logs, then resume at Section 6.7.
 
 Billable resources remain active until validation succeeds or you explicitly run:
 
@@ -729,3 +1418,24 @@ while IFS= read -r name; do unset "$name"; done < <(compgen -A variable AFD_PLS_
 ```
 
 Starting a new shell is an equivalent way to clear exported values.
+
+## Appendix A. Optional automation/reference
+
+The literal commands in Section 6 are authoritative. The following guarded entry points mirror
+that workflow for maintainers and unattended fresh runs, but they hide individual mutations behind
+scripts and must not be used as the primary operator instructions:
+
+```bash
+make phase7-e2e-step-01-registry-images
+make phase7-e2e-step-02-network
+make phase7-e2e-step-03-aks
+make phase7-e2e-step-04-identities-rbac-kubeconfig
+make phase7-e2e-step-05-crds-registration
+make phase7-e2e-step-06-waf-manifests
+make phase7-e2e-step-07-deploy-join
+make phase7-e2e-setup
+```
+
+The corresponding direct scripts are under `test/e2e/afdprivatelink/scripts/step-*.sh`; invoking
+them is also secondary automation. For debugging or retained-resource recovery, use the failed
+literal subsection instead.

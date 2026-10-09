@@ -84,6 +84,51 @@
 The user supplied explicit approval for this implementation plan in the task request, so the
 refactor may proceed without a further confirmation round. Phase 7 remains in progress.
 
+### Phase 7 literal-command runbook refactor plan
+
+On 2026-10-09 the user requested a documentation-only refactor that makes literal, copy/paste
+commands the authoritative setup workflow. The seven stage scripts and Make targets remain
+optional automation/reference only. No Azure/Kubernetes mutation, retained `.phase7` artifact
+change, commit, or push is approved.
+
+#### Phase 1: Authoritative operator workflow
+
+- [x] **Task L1.1: Replace Section 6 with seven literal command stages.**
+  - Each stage separates read-only inspection/preconditions from visible mutations, documents
+    expected output, and ends with read-only verification.
+  - Existing resources are inspected before conditional creation. In particular, an existing VNet
+    is never passed to `az network vnet create`, and existing subnets, AKS clusters, identities,
+    federations, assignments, WAF resources, and Kubernetes objects are reused only after
+    validation.
+  - Success criteria: no authoritative setup command invokes a stage script or setup Make target.
+- [x] **Task L1.2: Keep state bookkeeping explicit without duplicating jq internals.**
+  - Source `common.sh`, initialize deterministic names/state, and use its non-cloud bookkeeping
+    helpers while keeping every Azure and Kubernetes mutation visible in the README.
+  - Success criteria: five immutable image references and created/reused resources are recorded.
+- [x] **Task L1.3: Render and deploy exact Phase 7 resources.**
+  - Document pinned CRDs, populated registration chart, digest-only hub/member/echo/Gateway
+    manifests, explicit applies/waits, post-deployment IMC creation, real networking-agent
+    heartbeat observation, and aggregate MemberCluster status patching.
+  - Success criteria: ordering and mutation boundaries are copy/paste visible.
+
+#### Phase 2: Secondary automation and retry guidance
+
+- [x] **Task L2.1: Move Make/stage entry points to an optional appendix.**
+  - Success criteria: automation is explicitly secondary to literal Section 6 commands.
+- [x] **Task L2.2: Update troubleshooting and retained-run recovery.**
+  - Resume at the failed literal subsection; never recommend rerunning a Make target as the
+    authoritative recovery path.
+  - Success criteria: the safe VNet recovery rule remains unambiguous.
+
+#### Phase 3: Non-mutating validation
+
+- [x] **Task L3.1: Statically validate documentation and scripts.**
+  - Syntax-check extractable README Bash blocks and all existing scripts, run populated Helm
+    renders, execute read-only preflight with a fresh valid run ID, run `make fmt`, and run
+    `git diff --check`.
+  - Success criteria: validation performs no Azure/Kubernetes mutation and Phase 7 remains
+    incomplete.
+
 ## Plan
 
 ### Phase 1: Implement POC Phase 2 - hub member selection
@@ -766,8 +811,8 @@ The approved preparation work is to make the harness self-contained without runn
   observes heartbeat, and patches joined status.
 - Rewrote the README around numbered commands, expected checks, exact stage mutation boundaries,
   resume/failure semantics, common fixes, and retained run `p7-10082105`. Its next command is
-  `make phase7-e2e-step-02-network`; the documented recovery explicitly forbids deleting the
-  in-use subnet.
+  Section 6.2's read-only inspection block; the documented recovery explicitly forbids deleting
+  the in-use subnet.
 
 ### Phase 7 refactor static validation
 
@@ -783,6 +828,39 @@ The approved preparation work is to make the harness self-contained without runn
   member values are absent; the populated Phase 7 render passes.
 - Docker daemon/buildx and build-input checks passed. No image build/push, setup stage, cleanup,
   Azure create/update/delete, Kubernetes apply/delete/patch, or Helm install/upgrade ran.
+
+### Phase 7 literal-command runbook implementation
+
+- Section 6 now sources `common.sh`, initializes deterministic names/state, and presents seven
+  literal stages. Every stage has separate read-only preconditions, visible conditional mutation
+  commands, expected output, and a read-only verification gate.
+- VNet creation is guarded by a successful absence check. Retained VNets/subnets, AKS clusters,
+  identities, federations, role assignments, WAF objects, and Kubernetes resources are inspected
+  before conditional creation; mismatches stop rather than update or replace retained resources.
+- Registry publication visibly builds four images and records five immutable references, including
+  refresh-token. Registration visibly applies pinned CRDs and the populated existing chart without
+  creating IMCs. Rendering includes exact digest Helm values and visible echo/Gateway heredocs.
+- Deployment visibly applies each manifest, waits for all controllers/echo, creates IMCs, observes
+  a real `ServiceExportImportAgent` heartbeat and joined condition, and only then patches aggregate
+  MemberCluster joined status.
+- Section 9 now resumes at the failed literal subsection. Make targets, the sequential wrapper, and
+  direct stage scripts moved to an explicitly secondary optional appendix.
+- The runbook intentionally duplicates the operational command sequence implemented by the seven
+  scripts. This gives operators the requested mutation visibility but creates an unavoidable drift
+  risk; future setup changes must update and validate both Section 6 and the corresponding script.
+
+### Phase 7 literal-command validation
+
+- Extracted all README `bash` blocks and passed them through `bash -n`.
+- `bash -n test/e2e/afdprivatelink/scripts/*.sh` passed.
+- Populated hub, member, and getting-started registration Helm renders passed.
+- Read-only preflight passed for fresh valid ID `p7-10091647`; it performed account/provider/quota
+  queries only and did not create run artifacts or mutate Azure/Kubernetes.
+- `make fmt` and `git diff --check` passed; formatting introduced no unrelated tracked changes.
+- No stage/setup/cleanup command, image build/push, Azure create/update/delete, or Kubernetes
+  apply/delete/patch was executed. Retained `.phase7` artifacts were not touched.
+- Phase 7 remains incomplete pending the full human validation, evidence, bounded cleanup, and
+  separately approved commit/push.
 - `make -n` resolved all seven numbered targets to their intended stage scripts; all stage scripts
   are executable. Final shell syntax and whitespace checks passed after the last helper changes.
 - Changes remain uncommitted. Retained `.phase7` artifacts and attached snapshots were not touched.
