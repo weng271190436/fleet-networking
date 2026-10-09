@@ -131,7 +131,7 @@ first six bullets; the application and AFD items in the final two bullets are de
 - Basic ACR `fleetp7${AFD_PLS_E2E_RUN_ID//-/}d712`;
 - four image repositories/builds: hub Gateway controller, member controller, CRD installer, echo;
 - one hub-controller user-assigned identity/federated credential, three AKS control-plane
-  identities, three AKS kubelet identities, five built-in resource-scoped assignments, and three
+  identities, three AKS kubelet identities, seven built-in resource-scoped assignments, and three
   AKS-created AcrPull assignments;
 - three one-node `Standard_D2as_v4` workload-identity-enabled AKS clusters;
 - three tagged AKS node RGs, one VNet, three AKS subnets, and two PLS NAT subnets;
@@ -591,6 +591,7 @@ Create missing assignments only at the approved RG scopes:
 # Reload prerequisites so this block is safe to run independently in a new shell.
 hub_role_id="$(az role definition list --name Contributor --query '[0].name' -o tsv)"
 member_role_id="$(az role definition list --name 'Network Contributor' --query '[0].name' -o tsv)"
+reader_role_id="$(az role definition list --name Reader --query '[0].name' -o tsv)"
 hub_gateway_principal_id="$(az identity show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" --query principalId -o tsv)"
 member_1_principal_id="$(jq -r --arg n "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
@@ -605,7 +606,7 @@ vnet_id="$(az network vnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "$AFD_PLS_E2E_VNET" --query id -o tsv)"
 
 for required_name in \
-  hub_role_id member_role_id hub_gateway_principal_id \
+  hub_role_id member_role_id reader_role_id hub_gateway_principal_id \
   member_1_principal_id member_2_principal_id \
   member_1_aks_principal_id member_2_aks_principal_id vnet_id; do
   if [[ -z "${!required_name:-}" ]]; then
@@ -678,6 +679,16 @@ primary_scope="/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_P
 if ! ensure_assignment "$hub_gateway_principal_id" "$hub_role_id" "$primary_scope" hub-afd; then
   echo "STOP: Fix hub-afd above before continuing."
 fi
+if ! ensure_assignment "$hub_gateway_principal_id" "$reader_role_id" \
+    "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" \
+    hub-read-member-1-network; then
+  echo "STOP: Fix hub-read-member-1-network above before continuing."
+fi
+if ! ensure_assignment "$hub_gateway_principal_id" "$reader_role_id" \
+    "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" \
+    hub-read-member-2-network; then
+  echo "STOP: Fix hub-read-member-2-network above before continuing."
+fi
 if ! ensure_assignment "$member_1_principal_id" "$member_role_id" \
     "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" \
     member-1-pls; then
@@ -699,12 +710,20 @@ fi
 ```
 
 Each invocation prints either `Reusing`, `Creating`, or a complete `ERROR` message and returns to
-your prompt. Do not continue to kubeconfig commands unless all five print `Recorded`.
+your prompt. Do not continue to kubeconfig commands unless all seven print `Recorded`.
 
 The two `member-*-aks-vnet` assignments grant each member AKS cloud-provider identity
 `Network Contributor` on the exact test VNet. This is required for internal load balancer and PLS
 reconciliation because the PLS NAT subnets live in the primary resource group rather than the AKS
 node resource groups.
+
+The two `hub-read-member-*-network` assignments grant the hub Gateway controller built-in
+`Reader` on each member AKS node resource group. Azure Front Door linked-resource authorization
+requires the controller identity to read customer-created PLS resources, whose generated names do
+not exist during platform setup. Resource-group scope is an intentional POC tradeoff that keeps
+Part 2 self-service; it permits read-only access to other Azure resources in those node resource
+groups. A production deployment should replace built-in `Reader` with a validated purpose-built
+role containing only the required Azure network read operations.
 
 `--fill-principal-name false` is required in this environment. It prevents Azure CLI from querying
 Microsoft Graph, which is blocked by the organization's conditional-access token protection policy
@@ -745,7 +764,7 @@ kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts
 jq '.identities,.roleAssignments' "$AFD_PLS_E2E_STATE_FILE"
 ```
 
-Expected: all three exact contexts, the hub controller and AKS-managed identities, and five scoped
+Expected: all three exact contexts, the hub controller and AKS-managed identities, and seven scoped
 assignments appear.
 
 ### 6.5 Stage 05 — pinned CRDs and Fleet registration

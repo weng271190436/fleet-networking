@@ -116,6 +116,10 @@ done
     echo "error: built-in Network Contributor role is unavailable" >&2
     exit 1
 }
+[[ "$(az role definition list --name Reader --query 'length(@)' -o tsv)" == "1" ]] || {
+    echo "error: built-in Reader role is unavailable" >&2
+    exit 1
+}
 for provider in Microsoft.ContainerRegistry Microsoft.ContainerService Microsoft.Network Microsoft.Cdn Microsoft.ManagedIdentity; do
     state="$(az provider show --namespace "${provider}" --query registrationState -o tsv)"
     [[ "${state}" == "Registered" ]] || {
@@ -182,7 +186,7 @@ Billable plan:
     net-crd-installer, afd-pls-echo; setup records immutable digests and deploys only @sha256 refs
   - hub user-assigned managed identity (1) and federated credential (1)
   - AKS-managed control-plane identities (3) and kubelet identities (3)
-  - built-in resource-scoped role assignments (5) and AKS-created AcrPull assignments (3)
+  - built-in resource-scoped role assignments (7) and AKS-created AcrPull assignments (3)
   - AKS clusters (3): ${AFD_PLS_E2E_HUB_CLUSTER}, ${AFD_PLS_E2E_MEMBER1_CLUSTER}, ${AFD_PLS_E2E_MEMBER2_CLUSTER}
   - AKS nodes (3 total): one Standard_D2as_v4 node per cluster
   - deterministic AKS node resource groups (3):

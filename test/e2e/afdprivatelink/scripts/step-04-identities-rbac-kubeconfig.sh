@@ -119,6 +119,13 @@ ensure_assignment() {
     record_role_assignment "${logical_name}" "${principal}" "${role_id}" "${scope}" "${assignment_id}"
 }
 ensure_assignment "${hub_gateway_principal_id}" "${hub_role_id}" "${resource_group_id}" hub-afd
+reader_role_id="$(az role definition list --name Reader --query '[0].name' -o tsv)"
+ensure_assignment "${hub_gateway_principal_id}" "${reader_role_id}" \
+    "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" \
+    hub-read-member-1-network
+ensure_assignment "${hub_gateway_principal_id}" "${reader_role_id}" \
+    "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" \
+    hub-read-member-2-network
 member_1_principal_id="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER1_CLUSTER}-kubelet" \
     '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
 member_2_principal_id="$(jq -r --arg name "${AFD_PLS_E2E_MEMBER2_CLUSTER}-kubelet" \

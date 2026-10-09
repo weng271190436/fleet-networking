@@ -1046,3 +1046,149 @@ The approved preparation work is to make the harness self-contained without runn
 - `pkg/controllers/hub/gatewaymodel` — provider-neutral normalized model foundation.
 - `test/scripts` — repository infrastructure setup and cleanup conventions.
 - Azure CLI read-only account, provider, and regional quota queries — Phase 7 preflight evidence.
+
+## Part 2 customer quickstart simplification plan
+
+On 2026-10-09 the user requested that Part 2 become a concise, customer-facing quickstart modeled
+after `weng271190436/kubefleet-sample-app/QUICKSTART.md`. Part 1 remains the platform/operator
+prerequisite. Part 2 should assume that clusters, Fleet registration, controllers, CRDs,
+GatewayClass, identities, permissions, ACR, and immutable sample image are already ready. It must
+teach the customer scenario rather than expose setup-harness state management or Azure operator
+diagnostics.
+
+No `.github/.copilot/domain_knowledge` or `.github/.copilot/specifications` directory exists in
+this checkout. The POC design, current four-part runbook, and validated retained-run evidence are
+the applicable sources of truth.
+
+### Phase 1: Define and test the customer journey
+
+- [x] **Task Q1.1: Establish the minimum customer prerequisites and inputs.**
+  - Retain only the hub/member contexts, application image, WAF policy input or creation command,
+    and the namespaces/labels needed by the scenario.
+  - Success criteria: customers do not need to understand run-state JSON, controller identities,
+    role definitions, generated artifact paths, helper internals, or retained-run recovery.
+- [x] **Task Q1.2: Define lightweight documentation checks before rewriting.**
+  - Check shell-fence syntax, relative links, required resource kinds, and the end-to-end sequence.
+  - Success criteria: validation covers the actual copy/paste guide without executing Azure or
+    Kubernetes mutations.
+
+### Phase 2: Rewrite Part 2 as a customer quickstart
+
+- [x] **Task Q2.1: Add a short overview and prerequisites.**
+  - Explain the outcome: deploy the same Service to two member clusters, create a global Gateway,
+    and reach it through an AFD hostname protected by WAF.
+  - Success criteria: a customer can identify required access and inputs without reading Part 1
+    implementation details.
+- [x] **Task Q2.2: Present direct numbered deployment steps.**
+  - Use straightforward manifests and commands for WAF policy setup, member Deployments/Services,
+    `MultiClusterBackend`, `Gateway`, and `HTTPRoute`.
+  - Success criteria: commands are linear, copy/paste-oriented, and avoid custom state-file and
+    manifest-rendering machinery where static or clearly parameterized manifests suffice.
+- [x] **Task Q2.3: Present concise readiness and endpoint verification.**
+  - Show customer-facing `kubectl wait/get` checks, obtain the Gateway hostname, verify HTTP 200
+    responses from both members, and verify the WAF HTTP 403 rule.
+  - Success criteria: deep Azure PLS approval inspection and controller debugging are omitted or
+    reduced to a short troubleshooting pointer to Part 3.
+
+### Phase 3: Validate and document the rewrite
+
+- [x] **Task Q3.1: Run documentation validation.**
+  - Validate all Bash fences with `bash -n`, check links and required resources, run
+    `git diff --check`, and inspect only relevant diff hunks.
+  - Success criteria: the guide is syntactically sound and retains every required user-scenario
+    resource and assertion.
+- [x] **Task Q3.2: Update this breadcrumb with completed tasks and the before/after result.**
+  - Success criteria: decisions, changed files, validation, and any intentional omissions are
+    recorded before concluding.
+
+### Quickstart success criteria
+
+- [x] Part 2 reads as a customer quickstart rather than an infrastructure operator runbook.
+- [x] Part 2 assumes Part 1 platform setup and does not repeat its internals.
+- [x] The customer can deploy workloads and Services to both member clusters.
+- [x] The customer can create the WAF policy, `MultiClusterBackend`, `Gateway`, and `HTTPRoute`.
+- [x] The customer can wait for readiness, discover the AFD endpoint, and validate HTTP 200/403.
+- [x] Lifecycle testing and deep diagnostics remain in Part 3.
+- [x] Documentation checks pass without mutating the retained environment.
+
+### Additional reference
+
+- `https://github.com/weng271190436/kubefleet-sample-app/blob/main/QUICKSTART.md` — requested
+  model for a linear, numbered, customer-facing quickstart.
+
+### Approved PLS read-access boundary
+
+The user approved the following POC permission model before the quickstart rewrite:
+
+- Part 1 grants the hub Gateway controller identity built-in `Reader` on each member AKS node
+  resource group.
+- Part 2 contains no Azure role-assignment implementation steps.
+- Part 1 explicitly documents that resource-group-scoped read access is wider than an exact PLS
+  assignment. It is an intentional POC tradeoff that allows Services and their generated PLS
+  resources to remain customer-created without a platform-administrator pause.
+- A production design should replace built-in `Reader` with a validated purpose-built role
+  containing only the Azure network read operations required for AFD linked-resource
+  authorization.
+
+This supersedes the earlier runbook split decision that placed exact PLS `Reader` grants in Part
+2. The controller must not receive role-assignment write permission and must not grant access to
+itself.
+
+### Customer quickstart implementation details
+
+- Part 1 now resolves built-in `Reader` and records two additional assignments for the hub
+  Gateway controller at the exact member AKS node resource-group scopes. The expected setup
+  inventory increased from five to seven built-in assignments.
+- Part 1 documents that this read-only resource-group scope is wider than an exact PLS assignment
+  and recommends a validated network-read custom role for production.
+- Stage 04 optional automation creates or reuses the same two node-resource-group assignments.
+  Stage 07 no longer discovers PLS IDs or creates exact-PLS assignments after application
+  deployment.
+- The preflight verifies that built-in `Reader` exists and reports seven planned assignments.
+- Part 2 now follows a linear customer journey: set supplied inputs, create WAF, deploy the
+  application to both members, create `MultiClusterBackend`/`Gateway`/`HTTPRoute`, wait for
+  programming, retrieve the hostname, sample both members, and verify HTTP 200/403.
+- Part 2 contains no state-file manipulation, controller identity lookup, Azure role-assignment
+  command, generated-manifest bookkeeping, PLS inspection, or evidence-harness command.
+- Unexpected endpoint bodies now fail explicitly rather than being counted as successful member
+  samples.
+
+### Customer quickstart validation
+
+- Extracted all Bash fences from Parts 1 and 2 and passed them through `bash -n`.
+- All AFD Private Link shell scripts passed `bash -n`.
+- ShellCheck was unavailable and was not run.
+- Relative Markdown links in Parts 1 and 2 resolve.
+- Required customer resources and 200/403 assertions remain present.
+- Confirmed no role-assignment or exact-PLS permission command remains in Part 2 or Stage 07.
+- Confirmed Part 1, Stage 04, and preflight consistently use the two node-resource-group Reader
+  assignments and a seven-assignment inventory.
+- `git diff --check` passed.
+- No Azure, Kubernetes, image, setup, evidence, or cleanup mutation was executed. The rewritten
+  workflow has static validation only; its individual commands were not rerun against live Azure.
+
+### Customer quickstart before/after
+
+Before, Part 2 was a 440-line operator runbook tied to the retained run, state JSON, generated
+manifest files, identity/RBAC setup, Azure PLS inspection, and evidence collection. A customer had
+to pause after Service creation for exact PLS role assignments.
+
+After, Part 2 is a self-contained quickstart with explicit platform-provided inputs and six
+customer steps. Platform IAM is completed in Part 1, Fleet owns discovery and guarded approval,
+and lifecycle/operator diagnostics remain in Part 3.
+
+### Single-input quickstart follow-up
+
+The user requested that Part 2 make the validated POC naming assumptions so its setup block can be
+copied and pasted after changing only the run ID. Part 2 will source the existing side-effect-free
+`common.sh`, call `initialize_names`, and map its deterministic kubeconfig, contexts, primary
+resource group, WAF name, fixed subscription, and digest-pinned echo image into the short
+customer-facing variable names used by the guide. It will verify that the Part 1 kubeconfig,
+state file, and immutable echo image exist before continuing. This keeps the run ID as the only
+customer-edited input while preserving the exact Part 1 handoff.
+
+Part 2 now sources `common.sh` only when `initialize_names` is not already loaded, so the block is
+safe in either a fresh shell or the shell used for Part 1. It derives all eight quickstart
+variables, checks the run-scoped kubeconfig/state and immutable echo image, and contains exactly
+one editable placeholder: `replace-with-your-run-id`. The updated Bash fences pass `bash -n`, and
+`git diff --check` passes.
