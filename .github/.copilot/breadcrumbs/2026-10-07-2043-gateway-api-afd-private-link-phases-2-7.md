@@ -113,6 +113,21 @@ Controller Deployment pod templates include a checksum of their Azure cloud-conf
 corrected authentication configuration triggers a new ReplicaSet instead of relying on a
 CrashLoop restart or delayed projected-volume refresh.
 
+### Phase 7 retained-run hardening
+
+The user approved targeted fixes to retained run `p7-10082105` while away, but no new run or
+cleanup. The hardening pass will:
+
+- make chart init containers, rather than direct blanket CRD application, own networking CRD
+  installation by hub/member mode;
+- apply controller manifests and wait for CRD installers before applying custom Gateway/backend
+  resources;
+- audit every literal command block for standalone prerequisites, shell preservation, idempotency,
+  and expected verification;
+- reconcile only missing/corrected identities, scoped role assignments, manifests, and workloads
+  in the retained environment; and
+- preserve the environment and diagnostics on any failure.
+
 #### Phase 1: Authoritative operator workflow
 
 - [x] **Task L1.1: Replace Section 6 with seven literal command stages.**

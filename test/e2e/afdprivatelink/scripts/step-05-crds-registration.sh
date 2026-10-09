@@ -67,12 +67,6 @@ k "${AFD_PLS_E2E_HUB_CONTEXT}" apply --server-side --field-manager=phase7-e2e \
     -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_memberclusters.yaml" \
     -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_internalmemberclusters.yaml" \
     -f "${gateway_crd_dir}"
-for context in "${AFD_PLS_E2E_HUB_CONTEXT}" "${AFD_PLS_E2E_MEMBER1_CONTEXT}" \
-    "${AFD_PLS_E2E_MEMBER2_CONTEXT}"; do
-    k "${context}" apply --server-side --field-manager=phase7-e2e \
-        -f "${REPO_ROOT}/config/crd/bases"
-done
-
 registration_manifest="${AFD_PLS_E2E_ARTIFACT_DIR}/hub-member-registration.yaml"
 HELM_NO_PLUGINS=1 helm template phase7-registration \
     "${REPO_ROOT}/examples/getting-started/charts/hub" --namespace fleet-system \

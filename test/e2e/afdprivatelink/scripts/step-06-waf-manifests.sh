@@ -165,8 +165,7 @@ EOF
 }
 append_echo "${AFD_PLS_E2E_MEMBER1_MANIFEST}" member-1 pls-1
 append_echo "${AFD_PLS_E2E_MEMBER2_MANIFEST}" member-2 pls-2
-cat >>"${AFD_PLS_E2E_HUB_MANIFEST}" <<EOF
----
+cat >"${AFD_PLS_E2E_GATEWAY_MANIFEST}" <<EOF
 apiVersion: v1
 kind: Namespace
 metadata: {name: afd-pls-e2e}
@@ -206,7 +205,7 @@ spec:
     backendRefs: [{group: networking.fleet.azure.com, kind: MultiClusterBackend, name: echo}]
 EOF
 for manifest in "${AFD_PLS_E2E_HUB_MANIFEST}" "${AFD_PLS_E2E_MEMBER1_MANIFEST}" \
-    "${AFD_PLS_E2E_MEMBER2_MANIFEST}"; do
+    "${AFD_PLS_E2E_MEMBER2_MANIFEST}" "${AFD_PLS_E2E_GATEWAY_MANIFEST}"; do
     if grep -E '^[[:space:]]*image:' "${manifest}" |
         grep -Ev '@sha256:[[:xdigit:]]{64}"?[[:space:]]*$' >/dev/null; then
         echo "error: rendered workload image is not digest-pinned in ${manifest}" >&2

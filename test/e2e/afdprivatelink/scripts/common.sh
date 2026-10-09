@@ -51,6 +51,7 @@ initialize_names() {
     export AFD_PLS_E2E_HUB_MANIFEST="${AFD_PLS_E2E_HUB_MANIFEST:-${AFD_PLS_E2E_ARTIFACT_DIR}/hub.yaml}"
     export AFD_PLS_E2E_MEMBER1_MANIFEST="${AFD_PLS_E2E_MEMBER1_MANIFEST:-${AFD_PLS_E2E_ARTIFACT_DIR}/member-1.yaml}"
     export AFD_PLS_E2E_MEMBER2_MANIFEST="${AFD_PLS_E2E_MEMBER2_MANIFEST:-${AFD_PLS_E2E_ARTIFACT_DIR}/member-2.yaml}"
+    export AFD_PLS_E2E_GATEWAY_MANIFEST="${AFD_PLS_E2E_ARTIFACT_DIR}/gateway-resources.yaml"
     export AFD_PLS_E2E_HUB_CONTROLLER_DEPLOYMENT="deployment/hub-gateway-controller-manager"
 
     if [[ -f "${AFD_PLS_E2E_STATE_FILE}" ]]; then

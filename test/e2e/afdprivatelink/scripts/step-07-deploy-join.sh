@@ -16,7 +16,7 @@ require_primary_resource_group
     exit 1
 }
 for manifest in "${AFD_PLS_E2E_HUB_MANIFEST}" "${AFD_PLS_E2E_MEMBER1_MANIFEST}" \
-    "${AFD_PLS_E2E_MEMBER2_MANIFEST}"; do
+    "${AFD_PLS_E2E_MEMBER2_MANIFEST}" "${AFD_PLS_E2E_GATEWAY_MANIFEST}"; do
     [[ -s "${manifest}" ]] || {
         echo "error: rendered manifest ${manifest} is missing; run step 06" >&2
         exit 1
@@ -64,6 +64,11 @@ for context in "${AFD_PLS_E2E_MEMBER1_CONTEXT}" "${AFD_PLS_E2E_MEMBER2_CONTEXT}"
         deployment/member-net-controller-manager --timeout=20m
     k "${context}" -n afd-pls-e2e wait --for=condition=Available deployment/echo --timeout=20m
 done
+k "${AFD_PLS_E2E_HUB_CONTEXT}" wait --for=condition=Established \
+    crd/multiclusterbackends.networking.fleet.azure.com \
+    crd/serviceoriginassignments.networking.fleet.azure.com --timeout=5m
+k "${AFD_PLS_E2E_HUB_CONTEXT}" apply --server-side --field-manager=phase7-e2e \
+    -f "${AFD_PLS_E2E_GATEWAY_MANIFEST}"
 
 join_member() {
     local member_name="$1" namespace="fleet-member-${member_name}"

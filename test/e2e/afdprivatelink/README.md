@@ -766,11 +766,11 @@ k "$AFD_PLS_E2E_HUB_CONTEXT" apply --server-side --field-manager=phase7-e2e \
   -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_memberclusters.yaml" \
   -f "${fleet_crd_dir}/cluster.kubernetes-fleet.io_internalmemberclusters.yaml" \
   -f "$gateway_crd_dir"
-for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
-  "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
-  k "$context" apply --server-side --field-manager=phase7-e2e -f config/crd/bases
-done
 ```
+
+Do not apply `config/crd/bases` directly here. The hub and member chart init containers install the
+appropriate networking CRDs using `net-crd-installer --mode=hub|member`, matching production chart
+ownership and keeping hub-only APIs out of member clusters.
 
 Render the existing getting-started chart with both Azure principals, apply it, and create only
 `MemberCluster`s. Do not create `InternalMemberCluster`s yet:
@@ -974,8 +974,7 @@ append_echo "$AFD_PLS_E2E_MEMBER2_MANIFEST" member-2 pls-2
 Append the Gateway API resources:
 
 ```bash
-cat >>"$AFD_PLS_E2E_HUB_MANIFEST" <<EOF
----
+cat >"$AFD_PLS_E2E_GATEWAY_MANIFEST" <<EOF
 apiVersion: v1
 kind: Namespace
 metadata: {name: afd-pls-e2e}
@@ -1020,7 +1019,7 @@ EOF
 
 ```bash
 for manifest in "$AFD_PLS_E2E_HUB_MANIFEST" "$AFD_PLS_E2E_MEMBER1_MANIFEST" \
-  "$AFD_PLS_E2E_MEMBER2_MANIFEST"; do
+  "$AFD_PLS_E2E_MEMBER2_MANIFEST" "$AFD_PLS_E2E_GATEWAY_MANIFEST"; do
   test -s "$manifest"
   ! grep -E '^[[:space:]]*image:' "$manifest" |
     grep -Ev '@sha256:[[:xdigit:]]{64}"?[[:space:]]*$'
@@ -1035,7 +1034,9 @@ Expected: all manifests are non-empty and no tag-only workload image is printed.
 
 ```bash
 for manifest in "$AFD_PLS_E2E_HUB_MANIFEST" "$AFD_PLS_E2E_MEMBER1_MANIFEST" \
-  "$AFD_PLS_E2E_MEMBER2_MANIFEST"; do test -s "$manifest"; done
+  "$AFD_PLS_E2E_MEMBER2_MANIFEST" "$AFD_PLS_E2E_GATEWAY_MANIFEST"; do
+  test -s "$manifest"
+done
 k "$AFD_PLS_E2E_HUB_CONTEXT" get membercluster "$AFD_PLS_E2E_MEMBER1_CLUSTER"
 k "$AFD_PLS_E2E_HUB_CONTEXT" get membercluster "$AFD_PLS_E2E_MEMBER2_CLUSTER"
 for context in "$AFD_PLS_E2E_HUB_CONTEXT" "$AFD_PLS_E2E_MEMBER1_CONTEXT" \
@@ -1073,6 +1074,12 @@ for context in "$AFD_PLS_E2E_MEMBER1_CONTEXT" "$AFD_PLS_E2E_MEMBER2_CONTEXT"; do
     deployment/member-net-controller-manager --timeout=20m
   k "$context" -n afd-pls-e2e wait --for=condition=Available deployment/echo --timeout=20m
 done
+k "$AFD_PLS_E2E_HUB_CONTEXT" wait --for=condition=Established \
+  crd/multiclusterbackends.networking.fleet.azure.com \
+  crd/serviceoriginassignments.networking.fleet.azure.com \
+  --timeout=5m
+k "$AFD_PLS_E2E_HUB_CONTEXT" apply --server-side --field-manager=phase7-e2e \
+  -f "$AFD_PLS_E2E_GATEWAY_MANIFEST"
 ```
 
 Create each IMC, wait for a real `ServiceExportImportAgent` heartbeat plus `Joined=True`, and only
@@ -1135,6 +1142,7 @@ Generated files are mode-protected and run-scoped:
 .phase7-${AFD_PLS_E2E_RUN_ID}/hub.yaml
 .phase7-${AFD_PLS_E2E_RUN_ID}/member-1.yaml
 .phase7-${AFD_PLS_E2E_RUN_ID}/member-2.yaml
+.phase7-${AFD_PLS_E2E_RUN_ID}/gateway-resources.yaml
 ```
 
 Generated paths are always recomputed from the current run ID. This prevents a new run in the same
