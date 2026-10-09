@@ -140,8 +140,14 @@ for context_spec in \
         --admin --file "${AFD_PLS_E2E_KUBECONFIG}" --context "${context}" --overwrite-existing
     if kubectl --kubeconfig "${AFD_PLS_E2E_KUBECONFIG}" config get-contexts \
         "${context}-admin" --no-headers >/dev/null 2>&1; then
-        kubectl --kubeconfig "${AFD_PLS_E2E_KUBECONFIG}" config rename-context \
-            "${context}-admin" "${context}" >/dev/null
+        if kubectl --kubeconfig "${AFD_PLS_E2E_KUBECONFIG}" config get-contexts \
+            "${context}" --no-headers >/dev/null 2>&1; then
+            kubectl --kubeconfig "${AFD_PLS_E2E_KUBECONFIG}" config delete-context \
+                "${context}-admin" >/dev/null
+        else
+            kubectl --kubeconfig "${AFD_PLS_E2E_KUBECONFIG}" config rename-context \
+                "${context}-admin" "${context}" >/dev/null
+        fi
     fi
     kubectl --kubeconfig "${AFD_PLS_E2E_KUBECONFIG}" config get-contexts \
         "${context}" --no-headers >/dev/null

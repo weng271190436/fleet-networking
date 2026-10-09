@@ -647,11 +647,21 @@ for spec in \
     --file "$AFD_PLS_E2E_KUBECONFIG" --context "$context" --overwrite-existing
   if kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts \
     "${context}-admin" --no-headers >/dev/null 2>&1; then
-    kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config rename-context \
-      "${context}-admin" "$context"
+    if kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config get-contexts \
+        "$context" --no-headers >/dev/null 2>&1; then
+      echo "Normalized context $context already exists; deleting duplicate ${context}-admin"
+      kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config delete-context \
+        "${context}-admin"
+    else
+      kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" config rename-context \
+        "${context}-admin" "$context"
+    fi
   fi
 done
 ```
+
+On a retained run, messages saying the normalized context already exists are expected. The command
+deletes only the duplicate context entry; it does not delete or modify an AKS cluster.
 
 **READ ONLY — verify before Stage 05:**
 

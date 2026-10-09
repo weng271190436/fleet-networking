@@ -96,6 +96,9 @@ interactive shell. Shared helpers may be sourced without changing shell options,
 command blocks must print actionable errors and return control for diagnosis.
 Each independently copyable mutation block must also load and validate its own required IDs rather
 than depending on variables populated by an earlier optional inspection block.
+Kubeconfig refresh must be idempotent: when Azure CLI recreates a `*-admin` context and the
+normalized context already exists, delete only the duplicate `*-admin` context instead of failing
+to rename over the retained normalized context.
 
 #### Phase 1: Authoritative operator workflow
 
