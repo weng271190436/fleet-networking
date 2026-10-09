@@ -132,6 +132,9 @@ Hub backend status patches were rejected because manually constructed per-member
 `metav1.Condition` values omitted required `lastTransitionTime`. Member summaries use
 `meta.SetStatusCondition` and preserve the previous per-cluster condition slice to produce valid,
 stable transition timestamps.
+The fixed hub image initially remained Pending during rolling update because the one-node hub was
+at 97% requested CPU. Phase 7 renders a 25m hub controller request, matching the existing reduced
+member validation requests, so old and new replicas can overlap during rollout.
 
 ### Phase 7 retained-run hardening
 

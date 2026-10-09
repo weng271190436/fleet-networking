@@ -906,6 +906,7 @@ HELM_NO_PLUGINS=1 helm template phase7 charts/hub-gateway-controller-manager \
   --set-string crdInstaller.image.digest="$crd_digest" --set-string azure.clientId="$hub_client" \
   --set-string azure.tenantId="$tenant_id" --set-string azure.subscriptionId="$EXPECTED_SUBSCRIPTION_ID" \
   --set-string azure.resourceGroup="$AFD_PLS_E2E_RESOURCE_GROUP" \
+  --set-string resources.requests.cpu=25m \
   --set-string azure.location="$AFD_PLS_E2E_LOCATION" >"$AFD_PLS_E2E_HUB_MANIFEST"
 
 render_member() {
@@ -1165,8 +1166,9 @@ shell from accidentally reusing an earlier run's state or kubeconfig path.
 The state inventory records ACR/image digests, identities, federated credentials, role assignments,
 AKS-created assignments, resource IDs, and RGs. It contains no bearer tokens.
 
-The member chart uses reduced 25m CPU requests for each controller pod container in this
-single-node validation topology; default production chart requests are unchanged.
+The hub and member chart renders use reduced 25m controller CPU requests in this single-node
+validation topology so rolling updates fit beside AKS system add-ons; default production chart
+requests are unchanged.
 
 If a literal subsection fails, preserve all resources, inspect the failed command and Section 8,
 then resume at that subsection's **READ ONLY** block. Do not restart from Stage 01.

@@ -94,6 +94,7 @@ HELM_NO_PLUGINS=1 helm template phase7 "${REPO_ROOT}/charts/hub-gateway-controll
     --set-string crdInstaller.image.digest="${crd_digest}" --set-string azure.clientId="${hub_client}" \
     --set-string azure.tenantId="${tenant_id}" --set-string azure.subscriptionId="${EXPECTED_SUBSCRIPTION_ID}" \
     --set-string azure.resourceGroup="${AFD_PLS_E2E_RESOURCE_GROUP}" \
+    --set-string resources.requests.cpu=25m \
     --set-string azure.location="${AFD_PLS_E2E_LOCATION}" >"${AFD_PLS_E2E_HUB_MANIFEST}"
 
 render_member() {
