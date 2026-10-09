@@ -409,10 +409,13 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gateway *gatewayv1.Gat
 	if !containsString(gateway.Finalizers, GatewayFinalizer) {
 		return ctrl.Result{}, nil
 	}
+	gatewayKObj := klog.KObj(gateway)
 	desired := gatewaymodel.GlobalGateway{Namespace: gateway.Namespace, Name: gateway.Name, UID: string(gateway.UID)}
+	klog.InfoS("Deleting owned Azure Front Door profile for Gateway", "gateway", gatewayKObj)
 	if err := r.Provider.Delete(ctx, desired); err != nil {
 		return ctrl.Result{}, fmt.Errorf("delete Azure Front Door for Gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
 	}
+	klog.InfoS("Confirmed owned Azure Front Door profile deletion", "gateway", gatewayKObj)
 	backendUIDs, err := r.backendUIDsForGateway(ctx, gateway)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -431,6 +434,8 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gateway *gatewayv1.Gat
 			if err := r.Patch(ctx, assignment, client.MergeFrom(old)); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
+			klog.InfoS("Released origin cleanup finalizer after Gateway profile deletion",
+				"gateway", gatewayKObj, "serviceOriginAssignment", klog.KObj(assignment))
 		}
 	}
 	old := gateway.DeepCopy()
@@ -438,6 +443,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gateway *gatewayv1.Gat
 	if err := r.Patch(ctx, gateway, client.MergeFrom(old)); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
+	klog.InfoS("Removed Gateway cleanup finalizer", "gateway", gatewayKObj)
 	return ctrl.Result{}, nil
 }
 

@@ -191,6 +191,9 @@ cleanup. The hardening pass will:
 - Gateway deletion is Azure-asynchronous. The runbook submits a nonblocking Kubernetes delete and
   prints Gateway finalizer and AFD profile state until both are absent, rather than appearing stuck
   inside a silent `kubectl delete --wait=true`.
+  Gateway deletion reconciliation logs the start of Azure profile deletion, confirmed Azure
+  completion, assignment-finalizer release, and Gateway-finalizer removal. Previously successful
+  long-running deletion was silent because the provider blocks while polling Azure.
 
 #### Phase 1: Authoritative operator workflow
 
