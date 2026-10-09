@@ -71,7 +71,8 @@ k "${AFD_PLS_E2E_HUB_CONTEXT}" apply --server-side --field-manager=phase7-e2e \
     -f "${AFD_PLS_E2E_GATEWAY_MANIFEST}"
 
 join_member() {
-    local member_name="$1" namespace="fleet-member-${member_name}"
+    local member_name="$1"
+    local namespace="fleet-member-${member_name}"
     cat <<EOF | k "${AFD_PLS_E2E_HUB_CONTEXT}" apply -f -
 apiVersion: cluster.kubernetes-fleet.io/v1beta1
 kind: InternalMemberCluster
@@ -104,7 +105,7 @@ EOF
 join_member "${AFD_PLS_E2E_MEMBER1_CLUSTER}"
 join_member "${AFD_PLS_E2E_MEMBER2_CLUSTER}"
 
-assignments="$(az role assignment list --all \
+assignments="$(az role assignment list --all --fill-principal-name false \
     --query "[?contains(scope, '${AFD_PLS_E2E_RESOURCE_GROUP}')].{id:id,name:name,role:roleDefinitionName,principalId:principalId,scope:scope}" \
     -o json)"
 next="${AFD_PLS_E2E_STATE_FILE}.next"

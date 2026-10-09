@@ -1087,7 +1087,9 @@ then patch the aggregate MemberCluster condition:
 
 ```bash
 join_member() {
-  local member="$1" namespace="fleet-member-${member}" now
+  local member="$1"
+  local namespace="fleet-member-${member}"
+  local now
   cat <<EOF | k "$AFD_PLS_E2E_HUB_CONTEXT" apply -f -
 apiVersion: cluster.kubernetes-fleet.io/v1beta1
 kind: InternalMemberCluster

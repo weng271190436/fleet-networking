@@ -115,6 +115,10 @@ CrashLoop restart or delayed projected-volume refresh.
 Live member logs showed Helm rendered the requester allowlist with literal quote characters inside
 the argument value. The member chart must quote the complete
 `--afd-requester-subscription-allowlist=<uuid>` scalar, not only the UUID value.
+The retained Stage 07 reached healthy controllers and applied Gateway resources, then failed under
+`nounset` because one `local` declaration expanded `member_name` before assignment. Join helpers
+must assign dependent locals on separate lines, and final role-assignment inventory must disable
+Microsoft Graph principal-name enrichment.
 
 ### Phase 7 retained-run hardening
 
