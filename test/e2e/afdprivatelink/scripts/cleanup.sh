@@ -29,18 +29,17 @@ if [[ -f "${AFD_PLS_E2E_STATE_FILE}" ]]; then
         exit 1
     }
 
-    while IFS= read -r assignment_id; do
-        normalized_assignment_id="${assignment_id,,}"
-        subscription_prefix="/subscriptions/${EXPECTED_SUBSCRIPTION_ID,,}"
-        [[ "${normalized_assignment_id}" == "${subscription_prefix}/providers/microsoft.authorization/roleassignments/"* ||
-            "${normalized_assignment_id}" == "${subscription_prefix}/resourcegroups/${AFD_PLS_E2E_RESOURCE_GROUP,,}/providers/microsoft.authorization/roleassignments/"* ||
-            "${normalized_assignment_id}" == "${subscription_prefix}/resourcegroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP,,}/providers/microsoft.authorization/roleassignments/"* ||
-            "${normalized_assignment_id}" == "${subscription_prefix}/resourcegroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP,,}/providers/microsoft.authorization/roleassignments/"* ]] || {
-            echo "error: refusing unexpected role assignment ID ${assignment_id}" >&2
+    while IFS=$'\t' read -r assignment_name assignment_scope assignment_id; do
+        if ! validate_role_assignment_boundary "${assignment_scope}" "${assignment_id}"; then
+            echo "error: refusing recorded role assignment ${assignment_name}" >&2
             exit 1
-        }
+        fi
         az role assignment delete --ids "${assignment_id}" 2>/dev/null || true
-    done < <(jq -r '.roleAssignments[]?.id' "${AFD_PLS_E2E_STATE_FILE}")
+    done < <(jq -r '.roleAssignments[]? | [
+        (.name // ""),
+        (.scope // ""),
+        (.id // "")
+    ] | @tsv' "${AFD_PLS_E2E_STATE_FILE}")
 fi
 
 if ! az group show --name "${AFD_PLS_E2E_RESOURCE_GROUP}" --output none 2>/dev/null; then

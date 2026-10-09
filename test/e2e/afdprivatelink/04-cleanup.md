@@ -61,8 +61,10 @@ Run cleanup after success or failure.
 make phase7-e2e-cleanup
 ```
 
-Cleanup validates subscription, state run ID, deterministic names, RG tags, and assignment IDs,
-and then deletes:
+Cleanup validates subscription, state run ID, deterministic names, RG tags, and every recorded
+role assignment's scope/ID relationship. Assignment scopes must be inside one of the four exact
+run-owned resource groups; this includes resource-level assignments on the VNet and PLS resources.
+It then deletes:
 
 - the exact run-recorded built-in role assignments;
 - primary RG `fleet-afd-pls-${AFD_PLS_E2E_RUN_ID}`; and

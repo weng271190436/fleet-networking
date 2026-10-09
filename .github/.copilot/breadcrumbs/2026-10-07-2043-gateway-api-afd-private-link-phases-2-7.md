@@ -1192,3 +1192,39 @@ safe in either a fresh shell or the shell used for Part 1. It derives all eight 
 variables, checks the run-scoped kubeconfig/state and immutable echo image, and contains exactly
 one editable placeholder: `replace-with-your-run-id`. The updated Bash fences pass `bash -n`, and
 `git diff --check` passes.
+
+## Nested role-assignment cleanup fix
+
+The retained `p7-10082105` state records valid assignments at the primary RG, member node RGs,
+VNet, and exact PLS scopes. The cleanup guard accepted only assignment IDs directly below a
+subscription or resource group, so it would reject the VNet and PLS IDs and stop before deleting
+the run resource groups.
+
+The approved fix will:
+
+1. validate that every recorded assignment scope is the exact primary/hub-node/member-node
+   resource group or a descendant of one of those four run-owned resource groups;
+2. validate that the assignment ID is exactly below its recorded scope at
+   `providers/Microsoft.Authorization/roleAssignments/<UUID>`;
+3. reject subscription-wide, unrelated-RG, sibling-prefix, scope/ID mismatch, empty, and malformed
+   assignment records;
+4. use the validated helper from cleanup before each Azure deletion; and
+5. statically test direct-RG, VNet, PLS, and rejection cases without mutating Azure.
+
+This preserves fail-closed cleanup while supporting the resource-scoped assignments created by
+the validated POC workflow.
+
+### Nested role-assignment cleanup implementation and validation
+
+- Added `validate_role_assignment_boundary` to `common.sh`.
+- The helper accepts only the exact four deterministic run-owned RG scopes or descendants whose
+  assignment ID is exactly `<recorded-scope>/providers/Microsoft.Authorization/roleAssignments/<UUID>`.
+- Cleanup now reads each recorded assignment's name, scope, and ID, validates the pair, and stops
+  before Azure mutation if any record is invalid.
+- The retained `p7-10082105` state passed for all seven assignments: primary RG, both member node
+  RGs, two VNet assignments, and two exact PLS assignments.
+- A static rejection matrix passed for subscription scope, unrelated RG, sibling-prefix RG,
+  scope/ID mismatch, malformed UUID, and empty values.
+- `bash -n` passed for `common.sh`, `cleanup.sh`, and all Bash fences in Part 4.
+- `git diff --check` passed. ShellCheck was unavailable.
+- No Azure deletion or other cloud/Kubernetes mutation was executed.

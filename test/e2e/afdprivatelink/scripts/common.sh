@@ -63,6 +63,46 @@ initialize_names() {
     fi
 }
 
+validate_role_assignment_boundary() {
+    local scope="$1"
+    local assignment_id="$2"
+    local normalized_scope="${scope,,}"
+    local normalized_assignment_id="${assignment_id,,}"
+    local resource_group resource_group_scope
+    local allowed_scope=false
+
+    [[ -n "${scope}" && -n "${assignment_id}" ]] || {
+        echo "error: role assignment scope and ID must be non-empty" >&2
+        return 1
+    }
+
+    for resource_group in \
+        "${AFD_PLS_E2E_RESOURCE_GROUP}" \
+        "${AFD_PLS_E2E_HUB_NODE_RESOURCE_GROUP}" \
+        "${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" \
+        "${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}"; do
+        resource_group_scope="/subscriptions/${EXPECTED_SUBSCRIPTION_ID,,}/resourcegroups/${resource_group,,}"
+        if [[ "${normalized_scope}" == "${resource_group_scope}" ||
+            "${normalized_scope}" == "${resource_group_scope}/"* ]]; then
+            allowed_scope=true
+            break
+        fi
+    done
+
+    [[ "${allowed_scope}" == true ]] || {
+        echo "error: refusing role assignment outside the exact run resource groups: ${scope}" >&2
+        return 1
+    }
+
+    local assignment_prefix="${normalized_scope}/providers/microsoft.authorization/roleassignments/"
+    local assignment_suffix="${normalized_assignment_id#"${assignment_prefix}"}"
+    [[ "${normalized_assignment_id}" == "${assignment_prefix}"* &&
+        "${assignment_suffix}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
+        echo "error: role assignment ID does not match its recorded scope: ${assignment_id}" >&2
+        return 1
+    }
+}
+
 record_identity() {
     local name="$1" client_id="$2" principal_id="$3" resource_id="$4"
     local next="${AFD_PLS_E2E_STATE_FILE}.next"
