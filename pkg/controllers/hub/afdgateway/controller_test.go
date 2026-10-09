@@ -180,6 +180,11 @@ func TestReconcilePublishesStatusOnlyAfterProviderAndApproval(t *testing.T) {
 		!meta.IsStatusConditionTrue(parent.Conditions, routeConditionProgrammed) {
 		t.Fatalf("HTTPRoute conditions = %#v, want all true", parent.Conditions)
 	}
+	for _, condition := range parent.Conditions {
+		if condition.LastTransitionTime.IsZero() {
+			t.Errorf("HTTPRoute condition %q transition time is zero", condition.Type)
+		}
+	}
 }
 
 func TestReconcileProviderErrorPreservesProgrammedStatus(t *testing.T) {

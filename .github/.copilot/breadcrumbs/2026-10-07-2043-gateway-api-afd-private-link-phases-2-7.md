@@ -135,6 +135,10 @@ stable transition timestamps.
 The live AFD API requires `AfdOriginGroup.LoadBalancingSettings`; the provider sends explicit
 sample-size, successful-sample, and latency defaults. Gateway listener conditions likewise use
 `meta.SetStatusCondition` so required transition timestamps are valid and stable.
+AFD linked authorization requires the hub identity to read each member PLS. Stage 07 grants
+built-in `Reader` on the two exact discovered PLS resource IDs before applying Gateway resources.
+HTTPRoute parent conditions also use `meta.SetStatusCondition` to satisfy required transition
+timestamps.
 The fixed hub image initially remained Pending during rolling update because the one-node hub was
 at 97% requested CPU. Phase 7 renders a 25m hub controller request, matching the existing reduced
 member validation requests, so old and new replicas can overlap during rollout.

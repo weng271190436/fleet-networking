@@ -64,6 +64,39 @@ for context in "${AFD_PLS_E2E_MEMBER1_CONTEXT}" "${AFD_PLS_E2E_MEMBER2_CONTEXT}"
         deployment/member-net-controller-manager --timeout=20m
     k "${context}" -n afd-pls-e2e wait --for=condition=Available deployment/echo --timeout=20m
 done
+hub_principal_id="$(jq -r --arg name "afd-hub-id-${AFD_PLS_E2E_RUN_ID}" \
+    '.identities[] | select(.name == $name) | .principalId' "${AFD_PLS_E2E_STATE_FILE}")"
+reader_role_id="$(az role definition list --name Reader --query '[0].name' -o tsv)"
+[[ -n "${hub_principal_id}" && -n "${reader_role_id}" ]] || {
+    echo "error: hub principal or Reader role ID is missing" >&2
+    exit 1
+}
+ensure_pls_reader() {
+    local node_rg="$1" logical_name="$2"
+    local pls_json pls_id assignments assignment_id
+    pls_json="$(az network private-link-service list --resource-group "${node_rg}" -o json)"
+    [[ "$(jq 'length' <<<"${pls_json}")" -eq 1 ]] || {
+        echo "error: expected exactly one PLS in ${node_rg}" >&2
+        return 1
+    }
+    pls_id="$(jq -r '.[0].id' <<<"${pls_json}")"
+    assignments="$(az role assignment list --assignee-object-id "${hub_principal_id}" \
+        --scope "${pls_id}" --fill-principal-name false -o json |
+        jq --arg role "${reader_role_id}" --arg scope "${pls_id}" \
+            '[.[] | select((.roleDefinitionId | ascii_downcase | endswith("/" + ($role | ascii_downcase))) and
+              (.scope | ascii_downcase) == ($scope | ascii_downcase))]')"
+    if [[ "$(jq 'length' <<<"${assignments}")" -eq 0 ]]; then
+        assignment_id="$(az role assignment create --assignee-object-id "${hub_principal_id}" \
+            --assignee-principal-type ServicePrincipal --role "${reader_role_id}" \
+            --scope "${pls_id}" --query id -o tsv)"
+    else
+        assignment_id="$(jq -r '.[0].id' <<<"${assignments}")"
+    fi
+    record_role_assignment "${logical_name}" "${hub_principal_id}" "${reader_role_id}" \
+        "${pls_id}" "${assignment_id}"
+}
+ensure_pls_reader "${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" hub-read-member-1-pls
+ensure_pls_reader "${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" hub-read-member-2-pls
 k "${AFD_PLS_E2E_HUB_CONTEXT}" wait --for=condition=Established \
     crd/multiclusterbackends.networking.fleet.azure.com \
     crd/serviceoriginassignments.networking.fleet.azure.com --timeout=5m

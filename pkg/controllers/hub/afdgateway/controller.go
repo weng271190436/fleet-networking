@@ -614,17 +614,28 @@ func (r *Reconciler) patchRouteStatus(ctx context.Context, route *gatewayv1.HTTP
 	}
 	old := current.DeepCopy()
 	parentRef := matchingParentRef(&current, gateway.Name)
-	conditions := []metav1.Condition{
-		{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, Reason: string(gatewayv1.RouteReasonAccepted), Message: "route is accepted", ObservedGeneration: current.Generation},
+	var conditions []metav1.Condition
+	for i := range current.Status.Parents {
+		if current.Status.Parents[i].ControllerName == ControllerName &&
+			parentRefsEqual(current.Status.Parents[i].ParentRef, parentRef) {
+			conditions = append([]metav1.Condition(nil), current.Status.Parents[i].Conditions...)
+			break
+		}
+	}
+	accepted := metav1.Condition{
+		Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue,
+		Reason: string(gatewayv1.RouteReasonAccepted), Message: "route is accepted",
+		ObservedGeneration: current.Generation,
 	}
 	var validationErr *routeValidationError
 	if errors.As(routeErr, &validationErr) {
-		conditions[0] = metav1.Condition{
+		accepted = metav1.Condition{
 			Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionFalse,
 			Reason: string(gatewayv1.RouteReasonUnsupportedValue), Message: routeErr.Error(),
 			ObservedGeneration: current.Generation,
 		}
 	}
+	meta.SetStatusCondition(&conditions, accepted)
 	resolvedStatus := metav1.ConditionTrue
 	resolvedReason := string(gatewayv1.RouteReasonResolvedRefs)
 	resolvedMessage := "backend references are resolved"
@@ -635,10 +646,17 @@ func (r *Reconciler) patchRouteStatus(ctx context.Context, route *gatewayv1.HTTP
 			resolvedMessage = routeErr.Error()
 		}
 	}
-	conditions = append(conditions,
-		metav1.Condition{Type: string(gatewayv1.RouteConditionResolvedRefs), Status: resolvedStatus, Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: current.Generation},
-		metav1.Condition{Type: routeConditionProgrammed, Status: boolCondition(programmed), Reason: conditionReason(programmed, string(gatewayv1.GatewayReasonProgrammed), string(gatewayv1.RouteReasonPending)), Message: conditionMessage(programmed), ObservedGeneration: current.Generation},
-	)
+	meta.SetStatusCondition(&conditions, metav1.Condition{
+		Type: string(gatewayv1.RouteConditionResolvedRefs), Status: resolvedStatus,
+		Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: current.Generation,
+	})
+	meta.SetStatusCondition(&conditions, metav1.Condition{
+		Type: routeConditionProgrammed, Status: boolCondition(programmed),
+		Reason: conditionReason(programmed,
+			string(gatewayv1.GatewayReasonProgrammed),
+			string(gatewayv1.RouteReasonPending)),
+		Message: conditionMessage(programmed), ObservedGeneration: current.Generation,
+	})
 	parent := gatewayv1.RouteParentStatus{ParentRef: parentRef, ControllerName: ControllerName, Conditions: conditions}
 	replaced := false
 	for i := range current.Status.Parents {
