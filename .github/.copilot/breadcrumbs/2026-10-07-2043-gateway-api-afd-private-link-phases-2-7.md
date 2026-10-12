@@ -1589,3 +1589,25 @@ The revised block contains no `exit`, protects curl directly rather than relying
 status, and reports `member-1=true member-2=true` plus a pass message on success. Mocked curl
 failure, unexpected-body, and two-member success paths all passed under `set -euo pipefail`.
 All Part 2 Bash fences pass `bash -n`, and `git diff --check` passes.
+
+## Part 2-only reset workflow
+
+The user requested a few direct Kubernetes deletions in Part 2 rather than a reset script or Make
+target. The uncommitted script/target prototype was removed.
+
+- Delete `MultiClusterBackend/echo` first while the Gateway still exists, allowing the Gateway
+  controller to withdraw AFD origins and release assignment finalizers.
+- Delete `Gateway/global` and wait for the controller-owned AFD profile graph to disappear.
+- Delete the `afd-pls-e2e` namespace from both members so AKS removes the echo Services, ILBs, and
+  PLS resources; delete the hub application namespace to remove the HTTPRoute and remaining
+  namespaced objects.
+- Preserve the application-owned WAF policy so Section 2 can validate and reuse it.
+- Preserve GatewayClass, controllers, CRDs, clusters, identities, ACR/images, VNet/subnets, and
+  Fleet membership.
+
+Finalizer review confirmed this order is required: deleting the Gateway before the backend could
+leave subsequently terminating assignments without a Gateway reconcile to release their origin
+cleanup finalizers.
+
+Part 2 Bash fences and all AFD Private Link scripts pass `bash -n`; `git diff --check` passes. The
+destructive reset was not executed, and the current `weiweng-01` scenario remains intact.

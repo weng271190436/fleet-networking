@@ -429,6 +429,48 @@ Expected outputs, in order:
 Your global Service is now available through Azure Front Door with two private member-cluster
 origins and application-owned WAF protection.
 
+## Restart this scenario without deleting Part 1
+
+Delete the backend first so the Gateway controller can withdraw both AFD origins and release the
+assignment finalizers:
+
+```bash
+kubectl --context "$HUB_CONTEXT" \
+  --namespace afd-pls-e2e \
+  delete multiclusterbackend/echo \
+  --ignore-not-found \
+  --wait=true \
+  --timeout=20m
+```
+
+Delete the Gateway and wait for its controller-owned AFD profile graph:
+
+```bash
+kubectl --context "$HUB_CONTEXT" \
+  --namespace afd-pls-e2e \
+  delete gateway/global \
+  --ignore-not-found \
+  --wait=true \
+  --timeout=30m
+```
+
+Finally, delete the application namespaces. This removes the HTTPRoute and both member
+Deployments, Services, internal load balancers, and PLS resources:
+
+```bash
+for context in "$MEMBER_1_CONTEXT" "$MEMBER_2_CONTEXT" "$HUB_CONTEXT"; do
+  kubectl --context "$context" \
+    delete namespace afd-pls-e2e \
+    --ignore-not-found \
+    --wait=true \
+    --timeout=20m
+done
+```
+
+The WAF policy remains and is reused when Section 2 runs again. The AKS clusters, ACR/images,
+VNet/subnets, identities/RBAC, Fleet registration, controllers, CRDs, and `GatewayClass` also
+remain. Restart at Section 2.
+
 ## Troubleshooting
 
 - If a Deployment does not become available, run
