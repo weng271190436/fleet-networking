@@ -82,7 +82,7 @@ The stages perform:
 |---|---|
 | 01 | Tagged primary resource group, Basic ACR, four published images, five immutable references |
 | 02 | One VNet, three AKS subnets, and two PLS NAT subnets |
-| 03 | Three one-node workload-identity-enabled AKS clusters |
+| 03 | Three one-node workload-identity-enabled AKS clusters created concurrently |
 | 04 | Hub identity/federation, seven bounded assignments, and three kubeconfig contexts |
 | 05 | Pinned Fleet/Gateway CRDs, registration RBAC, and two MemberClusters |
 | 06 | Digest-pinned hub/member networking controllers only |

@@ -1475,3 +1475,50 @@ documents remain unchanged.
 - No replacement billable environment was provisioned. Live execution of the new Stage 06/07 and
   verifier wrappers remains pending for the next explicitly approved Part 1 run; the underlying
   literal boundary was previously validated twice.
+
+## Parallel AKS creation
+
+The user requested that Stage 03 create the hub and two member AKS clusters concurrently.
+
+### Plan
+
+- [x] Validate all subnets and every existing cluster before launching any create.
+- [x] Launch only missing clusters concurrently with one run-scoped log per cluster.
+- [x] Use `--no-ssh-key` to avoid concurrent access to shared SSH-key generation; the POC does not
+  require node SSH access.
+- [x] Wait for every create job, report each failure explicitly, and preserve logs/diagnostics when
+  any job fails.
+- [x] After all creates succeed, validate clusters and update state/identities/node-RG tags
+  sequentially so state-file writes cannot race.
+- [x] Update the concise/detailed documentation and run shell, control-flow, and diff validation.
+
+### Success criteria
+
+- A clean Stage 03 can provision up to three missing AKS clusters concurrently.
+- Reruns create only missing clusters and still reject mismatched retained clusters before
+  mutation.
+- A failed create does not hide other job results or produce concurrent state-file writes.
+- Subsequent stages receive the same validated state shape as before.
+
+### Parallel AKS implementation and validation
+
+- Stage 03 now launches one background `az aks create` process for each missing cluster after the
+  existing all-cluster prevalidation loop succeeds.
+- Each create writes to a separate run-scoped log. The stage waits for every PID, prints successful
+  output, removes successful logs, reports each failing cluster and exit status, and retains failed
+  logs for diagnosis.
+- The post-create loop remains sequential and owns all `validate_cluster`, state inventory,
+  identity inventory, node-RG tagging, and VMSS recovery operations.
+- New clusters use `--no-ssh-key`; node SSH is not required by this POC, and this avoids a race on
+  shared default-key generation.
+- Preflight now verifies Azure CLI support for `--no-ssh-key`. Its first implementation piped CLI
+  help into `grep -q`, which triggered an Azure CLI `BrokenPipeError`; capturing the complete help
+  output before searching fixed the issue.
+- `bash -n` passed for Stage 03, preflight, and the detailed reference Bash fences.
+- Simulated three-job success and partial-failure paths confirmed that every PID is waited and
+  failures are retained after all jobs complete.
+- Read-only preflight passed for fresh, absent run ID `p7-s1012`; no Azure resources or local run
+  state were created.
+- `git diff --check` passed.
+- Live parallel AKS provisioning remains to be witnessed during the next explicitly approved clean
+  Part 1 run; no billable resources were created for this change.

@@ -19,6 +19,11 @@ require_env AZURE_SUBSCRIPTION_ID
 for tool in az jq kubectl helm go git curl docker make; do
     require_command "${tool}"
 done
+aks_create_help="$(az aks create --help)"
+grep -Fq -- '--no-ssh-key' <<<"${aks_create_help}" || {
+    echo "error: Azure CLI does not support az aks create --no-ssh-key" >&2
+    exit 1
+}
 docker info >/dev/null
 docker buildx version >/dev/null
 

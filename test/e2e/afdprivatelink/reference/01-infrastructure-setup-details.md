@@ -428,6 +428,9 @@ Expected: each retained cluster validates exactly; missing clusters are named.
 
 **MUTATING — create only missing clusters, then record clusters and identities:**
 
+The Stage 03 target launches missing cluster creates concurrently and performs validation/state
+updates sequentially. The expanded loop below is intentionally sequential for manual inspection.
+
 ```bash
 test "$AFD_PLS_E2E_APPROVED" = true
 for spec in "${cluster_specs[@]}"; do
@@ -448,7 +451,7 @@ for spec in "${cluster_specs[@]}"; do
       --vnet-subnet-id "${vnet_id}/subnets/${subnet}" --enable-managed-identity \
       --enable-aad --enable-azure-rbac \
       --enable-oidc-issuer --enable-workload-identity --attach-acr "$AFD_PLS_E2E_ACR" \
-      --node-resource-group "$node_rg" --generate-ssh-keys --tags "${tags[@]}" --output none
+      --node-resource-group "$node_rg" --no-ssh-key --tags "${tags[@]}" --output none
   fi
   validate_cluster "$cluster" "$subnet" "$node_rg"
   cluster_json="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" -n "$cluster" -o json)"

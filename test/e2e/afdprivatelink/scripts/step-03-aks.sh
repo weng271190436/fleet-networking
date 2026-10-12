@@ -91,6 +91,9 @@ for spec in "${cluster_specs[@]}"; do
     fi
 done
 
+declare -a create_pids=()
+declare -a create_clusters=()
+declare -a create_logs=()
 for spec in "${cluster_specs[@]}"; do
     cluster="${spec%%:*}"
     rest="${spec#*:}"
@@ -99,14 +102,42 @@ for spec in "${cluster_specs[@]}"; do
     subnet_id="${vnet_id}/subnets/${subnet}"
     if ! az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" --name "${cluster}" \
         --output none 2>/dev/null; then
+        create_log="${AFD_PLS_E2E_ARTIFACT_DIR}/aks-create-${cluster}.log"
+        echo "starting AKS cluster creation: ${cluster}"
         az aks create --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" --name "${cluster}" \
             --location "${AFD_PLS_E2E_LOCATION}" --node-count 1 --node-vm-size Standard_D2as_v4 \
             --network-plugin azure --load-balancer-sku standard --vnet-subnet-id "${subnet_id}" \
             --enable-managed-identity --enable-aad --enable-azure-rbac \
             --enable-oidc-issuer --enable-workload-identity \
             --attach-acr "${AFD_PLS_E2E_ACR}" --node-resource-group "${node_rg}" \
-            --generate-ssh-keys --tags "${tags[@]}" --output none
+            --no-ssh-key --tags "${tags[@]}" --output none >"${create_log}" 2>&1 &
+        create_pids+=("$!")
+        create_clusters+=("${cluster}")
+        create_logs+=("${create_log}")
     fi
+done
+
+create_failed=false
+for index in "${!create_pids[@]}"; do
+    if wait "${create_pids[${index}]}"; then
+        cat "${create_logs[${index}]}"
+        rm -f "${create_logs[${index}]}"
+        echo "AKS cluster creation completed: ${create_clusters[${index}]}"
+    else
+        status="$?"
+        echo "error: AKS cluster creation failed for ${create_clusters[${index}]} (exit ${status})" >&2
+        cat "${create_logs[${index}]}" >&2
+        create_failed=true
+    fi
+done
+[[ "${create_failed}" == false ]] || exit 1
+
+# Validate and record sequentially so state-file updates cannot race.
+for spec in "${cluster_specs[@]}"; do
+    cluster="${spec%%:*}"
+    rest="${spec#*:}"
+    subnet="${rest%%:*}"
+    node_rg="${rest#*:}"
     validate_cluster "${cluster}" "${subnet}" "${node_rg}"
     cluster_id="$(az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
         --name "${cluster}" --query id -o tsv)"
