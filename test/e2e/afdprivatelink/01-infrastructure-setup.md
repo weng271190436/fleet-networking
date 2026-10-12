@@ -3,7 +3,7 @@
 [Previous: cleanup (for retained runs)](04-cleanup.md) ·
 [Next: global Service scenario](02-global-service-scenario.md)
 
-> **Status: Validated.** Fresh run `p7-10092240` completed this reusable platform setup and real
+> **Status: Validated.** Fresh run `p7-10092311` completed this reusable platform setup and real
 > networking-agent join on 2026-10-09. The environment remains active and ready for Part 2.
 > Phase 7 is not complete because the fail-static lifecycle assertion remains outstanding.
 

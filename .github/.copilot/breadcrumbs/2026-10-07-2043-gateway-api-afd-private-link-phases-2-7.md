@@ -1334,3 +1334,59 @@ the legacy path as a compatibility fallback. No AKS topology or security require
   policies, zero AFD profiles, zero Gateways, and zero MultiClusterBackends.
 - The environment remains active and billable. Part 2 can start with only
   `AFD_PLS_E2E_RUN_ID=p7-10092240`; otherwise Part 4 can remove the exact run.
+
+## Second clean Part 1 validation
+
+On 2026-10-09 the user explicitly requested bounded Part 4 cleanup of `p7-10092240`, followed by
+another clean Part 1 execution. The second run ID is `p7-10092311`.
+
+### Phase 1: Remove the first fresh run
+
+- [x] **Task M1.1: Execute bounded cleanup for `p7-10092240`.**
+  - Success criteria: cleanup validates recorded scopes and deletes only the exact run-owned role
+    assignments and four tagged resource groups.
+- [x] **Task M1.2: Verify cleanup.**
+  - Success criteria: all four Azure RG existence checks return false; kubeconfig, state, and
+    artifact directory are absent; evidence remains if present.
+
+### Phase 2: Execute Part 1 for `p7-10092311`
+
+- [x] **Task M2.1: Run read-only preflight.**
+  - Success criteria: subscription, quota, deterministic names, tools, renders, and boundaries
+    pass before mutation.
+- [x] **Task M2.2: Execute Stages 01 through 05.**
+  - Success criteria: immutable images, network, three AKS clusters, seven assignments, contexts,
+    CRDs, registration, and MemberClusters are ready.
+- [x] **Task M2.3: Execute literal Part 1 controller and join boundary.**
+  - Success criteria: deploy only controllers, observe two real agent joins, and install the
+    reusable GatewayClass without creating Part 2 resources.
+
+### Phase 3: Verify and document
+
+- [x] **Task M3.1: Run the complete Part 1 exit gate.**
+  - Success criteria: nodes/controllers/images/heartbeats/CRDs/access pass, and application, PLS,
+    WAF, Gateway, backend, and AFD resources are absent.
+- [x] **Task M3.2: Fix and resume any failure surgically.**
+  - Success criteria: failures preserve the environment and resume only at the responsible stage.
+- [x] **Task M3.3: Record the resulting active environment.**
+  - Success criteria: cleanup and new-run outcomes, fixes, validation, and remaining billable
+    resources are explicit.
+
+### Second clean-run result
+
+- Bounded cleanup for `p7-10092240` completed successfully. All four exact resource groups
+  returned `false`, and its generated kubeconfig, state, and artifact directory are absent.
+- Read-only preflight passed for `p7-10092311` with clean deterministic names, sufficient quota,
+  and zero existing AFD profiles.
+- Stages 01 through 05 completed without fixes: four repositories/five immutable images, exact
+  network, three AKS clusters, seven assignments, three contexts, pinned CRDs, registration, and
+  two MemberClusters.
+- Stage 03 completed on its first attempt, confirming the current/legacy workload-identity schema
+  correction works on clean cluster creation.
+- Literal Part 1 controller deployment produced only digest-pinned controller objects. All three
+  Deployments became Available and both networking CRDs became Established.
+- Both networking agents reported real `ServiceExportImportAgent` heartbeats and `Joined=True`.
+  `GatewayClass/azure-fleet-afd` reports `Accepted=True`.
+- The final gate passed with one Ready node per cluster and zero application Services, PLS
+  resources, WAF policies, Gateways, MultiClusterBackends, or AFD profiles.
+- `p7-10092311` remains active and billable, ready for Part 2 using only its run ID.
