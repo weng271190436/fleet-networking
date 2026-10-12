@@ -15,6 +15,9 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
+
+	"k8s.io/klog/v2"
 
 	"go.goms.io/fleet-networking/pkg/controllers/hub/gatewaymodel"
 )
@@ -162,17 +165,30 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 	if err != nil {
 		return Result{}, err
 	}
+	gateway := desired.Namespace + "/" + desired.Name
+	klog.InfoS("Reconciling Azure Front Door resource graph",
+		"gateway", gateway,
+		"profile", graph.Profile.Name,
+		"originGroups", len(graph.OriginGroups),
+		"origins", len(graph.Origins),
+		"routes", len(graph.Routes))
 	wafGroup, wafName, err := parseWAFPolicyID(desired.WAFPolicyID)
 	if err != nil {
 		return Result{}, err
 	}
+	klog.InfoS("Validating pre-created Azure Front Door WAF policy",
+		"gateway", gateway, "resourceGroup", wafGroup, "wafPolicy", wafName)
 	waf, err := p.clients.GetWAFPolicy(ctx, wafGroup, wafName)
 	if err != nil {
+		klog.ErrorS(err, "Failed to validate pre-created Azure Front Door WAF policy",
+			"gateway", gateway, "resourceGroup", wafGroup, "wafPolicy", wafName)
 		return Result{}, retryable(fmt.Errorf("get pre-created WAF policy %q: %w", desired.WAFPolicyID, err))
 	}
 	if !strings.EqualFold(waf.ID, desired.WAFPolicyID) {
 		return Result{}, fmt.Errorf("pre-created WAF policy returned ID %q, want %q", waf.ID, desired.WAFPolicyID)
 	}
+	klog.InfoS("Validated pre-created Azure Front Door WAF policy",
+		"gateway", gateway, "resourceGroup", wafGroup, "wafPolicy", wafName)
 
 	resources := []struct {
 		kind   ResourceKind
@@ -213,6 +229,8 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 	for _, item := range resources {
 		current, getErr := p.clients.Get(ctx, item.kind, item.parent, item.value.Name)
 		if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+			klog.ErrorS(getErr, "Failed to observe Azure Front Door resource",
+				"gateway", gateway, "kind", item.kind, "name", item.value.Name)
 			return result, retryable(fmt.Errorf("get %s %q: %w", item.kind, item.value.Name, getErr))
 		}
 		if getErr == nil {
@@ -229,18 +247,48 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 					} else {
 						result.Ready = false
 						result.Pending = append(result.Pending, fmt.Sprintf("%s/%s", item.kind, item.value.Name))
+						klog.InfoS("Waiting for Azure Front Door resource provisioning",
+							"gateway", gateway,
+							"kind", item.kind,
+							"name", item.value.Name,
+							"provisioningState", current.ProvisioningState)
 						continue
 					}
 				}
 				if current.ProvisioningState == ProvisioningStateSucceeded {
+					klog.V(2).InfoS("Azure Front Door resource is ready",
+						"gateway", gateway, "kind", item.kind, "name", item.value.Name)
 					continue
 				}
 			}
 		}
+		operation := "update"
+		if errors.Is(getErr, ErrNotFound) {
+			operation = "create"
+		}
+		started := time.Now()
+		klog.InfoS("Starting Azure Front Door resource reconciliation",
+			"gateway", gateway,
+			"kind", item.kind,
+			"name", item.value.Name,
+			"operation", operation)
 		updated, updateErr := p.clients.Upsert(ctx, item.kind, item.parent, item.value)
 		if updateErr != nil {
+			klog.ErrorS(updateErr, "Azure Front Door resource reconciliation failed",
+				"gateway", gateway,
+				"kind", item.kind,
+				"name", item.value.Name,
+				"operation", operation,
+				"elapsed", time.Since(started).Round(time.Millisecond))
 			return result, retryable(fmt.Errorf("upsert %s %q: %w", item.kind, item.value.Name, updateErr))
 		}
+		klog.InfoS("Completed Azure Front Door resource reconciliation",
+			"gateway", gateway,
+			"kind", item.kind,
+			"name", item.value.Name,
+			"operation", operation,
+			"provisioningState", updated.ProvisioningState,
+			"elapsed", time.Since(started).Round(time.Millisecond))
 		result.Ready = false
 		if item.kind == ResourceEndpoint {
 			result.EndpointHostName = updated.HostName
@@ -250,6 +298,12 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 		}
 	}
 	sort.Strings(result.Pending)
+	klog.InfoS("Observed Azure Front Door resource graph",
+		"gateway", gateway,
+		"profile", graph.Profile.Name,
+		"ready", result.Ready,
+		"pending", result.Pending,
+		"endpointHostName", result.EndpointHostName)
 	return result, nil
 }
 

@@ -1625,3 +1625,16 @@ iteration tag, resolves and records its digest atomically, invokes controller-on
 waits for the affected rollout. Part 1 documents the one-command loop and hub log follow command.
 All AFD Private Link scripts, both Make dry-run variants, Part 1 Bash fences, preflight wiring, and
 `git diff --check` pass. No image was built or pushed during static validation.
+
+## AFD reconciliation progress logging
+
+The user requested visible progress while the Azure SDK spends several minutes creating the AFD
+profile graph. Add structured, non-sensitive logs for graph start, WAF validation, each resource
+create/update poll start and completion, pending provisioning observations, errors with elapsed
+time, graph summary, and Gateway profile deletion duration.
+
+Implemented the logs in the AFD provider and Gateway deletion controller. Resource operations log
+Gateway, kind, deterministic name, create/update action, provisioning state, and elapsed time
+without request tokens, credentials, or private-link IDs. Part 1 describes the emitted progress.
+`make fmt`, focused `go test -v`, focused `go vet`, and `git diff --check` pass. The generic test
+runner did not discover Go tests, so validation used the repository's native Go commands.

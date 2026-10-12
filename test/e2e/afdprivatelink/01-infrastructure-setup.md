@@ -139,8 +139,10 @@ kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" \
   --follow
 ```
 
-Use `Ctrl+C` to stop following logs. For API/CRD, chart, or dependency changes, rebuild the
-additional owning images or rerun the relevant setup stage.
+The hub logs show graph start, WAF validation, each AFD resource create/update start and completion,
+Azure provisioning state, elapsed poll time, pending resources, and the final graph summary. Use
+`Ctrl+C` to stop following logs. For API/CRD, chart, or dependency changes, rebuild the additional
+owning images or rerun the relevant setup stage.
 
 ## 6. Continue to the customer quickstart
 

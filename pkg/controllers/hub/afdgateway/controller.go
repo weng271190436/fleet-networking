@@ -411,11 +411,14 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, gateway *gatewayv1.Gat
 	}
 	gatewayKObj := klog.KObj(gateway)
 	desired := gatewaymodel.GlobalGateway{Namespace: gateway.Namespace, Name: gateway.Name, UID: string(gateway.UID)}
+	deleteStarted := time.Now()
 	klog.InfoS("Deleting owned Azure Front Door profile for Gateway", "gateway", gatewayKObj)
 	if err := r.Provider.Delete(ctx, desired); err != nil {
 		return ctrl.Result{}, fmt.Errorf("delete Azure Front Door for Gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
 	}
-	klog.InfoS("Confirmed owned Azure Front Door profile deletion", "gateway", gatewayKObj)
+	klog.InfoS("Confirmed owned Azure Front Door profile deletion",
+		"gateway", gatewayKObj,
+		"elapsed", time.Since(deleteStarted).Round(time.Millisecond))
 	backendUIDs, err := r.backendUIDsForGateway(ctx, gateway)
 	if err != nil {
 		return ctrl.Result{}, err
