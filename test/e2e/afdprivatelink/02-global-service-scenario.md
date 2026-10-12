@@ -352,39 +352,56 @@ both `member-1` and `member-2`.
 Send requests until both member clusters respond:
 
 ```bash
-declare -A SEEN=()
+seen_member_1=false
+seen_member_2=false
+request_failed=false
 
 for _ in $(seq 1 60); do
-  body="$(
-    curl --fail --silent --show-error --max-time 30 "https://${HOSTNAME}/" |
-      tr -d '\r\n'
-  )"
+  if ! body="$(
+    curl --fail --silent --show-error --max-time 30 "https://${HOSTNAME}/"
+  )"; then
+    echo "Request failed; returning control to the prompt." >&2
+    request_failed=true
+    break
+  fi
+
+  body="$(printf '%s' "$body" | tr -d '\r\n')"
   echo "$body"
   case "$body" in
-    member-1|member-2)
-      SEEN["$body"]=1
+    member-1)
+      seen_member_1=true
+      ;;
+    member-2)
+      seen_member_2=true
       ;;
     *)
-      echo "Unexpected response: $body" >&2
-      exit 1
+      echo "Unexpected response: $body; returning control to the prompt." >&2
+      request_failed=true
+      break
       ;;
   esac
 
-  if [[ -n "${SEEN[member-1]:-}" && -n "${SEEN[member-2]:-}" ]]; then
+  if [[ "$seen_member_1" == true && "$seen_member_2" == true ]]; then
     break
   fi
   sleep 5
 done
 
-printf 'member-1=%s member-2=%s\n' \
-  "${SEEN[member-1]:-0}" \
-  "${SEEN[member-2]:-0}"
+printf 'member-1=%s member-2=%s\n' "$seen_member_1" "$seen_member_2"
+if [[ "$request_failed" == true ||
+      "$seen_member_1" != true ||
+      "$seen_member_2" != true ]]; then
+  echo "Traffic verification failed; inspect the output above." >&2
+else
+  echo "Traffic verification passed."
+fi
 ```
 
 Expected final output:
 
 ```text
-member-1=1 member-2=1
+member-1=true member-2=true
+Traffic verification passed.
 ```
 
 Verify the WAF policy:

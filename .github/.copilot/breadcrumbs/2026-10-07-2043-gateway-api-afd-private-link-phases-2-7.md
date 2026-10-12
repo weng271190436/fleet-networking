@@ -1577,3 +1577,15 @@ leave orphaned role assignments.
 - A second Stage 04 execution succeeded and retained exactly seven unique assignments, confirming
   migration idempotency.
 - `bash -n` and `git diff --check` passed.
+
+## Interactive traffic-check safety
+
+The Part 2 traffic sampling block called `exit 1` on an unexpected response. When pasted directly
+into an interactive terminal, that exits the user's shell rather than only stopping the check.
+The block will use boolean state, protect curl failures in an `if`, stop its loop with `break`, and
+print an explicit pass/fail summary while always returning control to the prompt.
+
+The revised block contains no `exit`, protects curl directly rather than relying on pipeline
+status, and reports `member-1=true member-2=true` plus a pass message on success. Mocked curl
+failure, unexpected-body, and two-member success paths all passed under `set -euo pipefail`.
+All Part 2 Bash fences pass `bash -n`, and `git diff --check` passes.
