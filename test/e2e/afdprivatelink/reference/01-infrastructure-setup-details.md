@@ -605,13 +605,11 @@ member_1_aks_principal_id="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "$AFD_PLS_E2E_MEMBER1_CLUSTER" --query identity.principalId -o tsv)"
 member_2_aks_principal_id="$(az aks show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
   -n "$AFD_PLS_E2E_MEMBER2_CLUSTER" --query identity.principalId -o tsv)"
-vnet_id="$(az network vnet show -g "$AFD_PLS_E2E_RESOURCE_GROUP" \
-  -n "$AFD_PLS_E2E_VNET" --query id -o tsv)"
 
 for required_name in \
   hub_role_id member_role_id reader_role_id hub_gateway_principal_id \
   member_1_principal_id member_2_principal_id \
-  member_1_aks_principal_id member_2_aks_principal_id vnet_id; do
+  member_1_aks_principal_id member_2_aks_principal_id; do
   if [[ -z "${!required_name:-}" ]]; then
     echo "ERROR: ${required_name} is empty. Stop before role-assignment commands." >&2
   else
@@ -702,23 +700,25 @@ if ! ensure_assignment "$member_2_principal_id" "$member_role_id" \
     member-2-pls; then
   echo "STOP: Fix member-2-pls above before continuing."
 fi
-if ! ensure_assignment "$member_1_aks_principal_id" "$member_role_id" "$vnet_id" \
-    member-1-aks-vnet; then
-  echo "STOP: Fix member-1-aks-vnet above before continuing."
+if ! ensure_assignment "$member_1_aks_principal_id" "$member_role_id" "$primary_scope" \
+    member-1-aks-network; then
+  echo "STOP: Fix member-1-aks-network above before continuing."
 fi
-if ! ensure_assignment "$member_2_aks_principal_id" "$member_role_id" "$vnet_id" \
-    member-2-aks-vnet; then
-  echo "STOP: Fix member-2-aks-vnet above before continuing."
+if ! ensure_assignment "$member_2_aks_principal_id" "$member_role_id" "$primary_scope" \
+    member-2-aks-network; then
+  echo "STOP: Fix member-2-aks-network above before continuing."
 fi
 ```
 
 Each invocation prints either `Reusing`, `Creating`, or a complete `ERROR` message and returns to
 your prompt. Do not continue to kubeconfig commands unless all seven print `Recorded`.
 
-The two `member-*-aks-vnet` assignments grant each member AKS cloud-provider identity
-`Network Contributor` on the exact test VNet. This is required for internal load balancer and PLS
-reconciliation because the PLS NAT subnets live in the primary resource group rather than the AKS
-node resource groups.
+The two `member-*-aks-network` assignments grant each member AKS cloud-provider identity
+`Network Contributor` on the exact run-owned primary resource group. This is required for internal
+load balancer and PLS reconciliation because the dedicated PLS NAT subnets and any Azure
+Policy-managed NSGs attached to them are sibling resources in that group. VNet-only scope cannot
+authorize `Microsoft.Network/networkSecurityGroups/join/action` on a sibling NSG. The Stage 04
+target removes superseded run-recorded VNet assignments during migration.
 
 The two `hub-read-member-*-network` assignments grant the hub Gateway controller built-in
 `Reader` on each member AKS node resource group. Azure Front Door linked-resource authorization

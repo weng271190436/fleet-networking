@@ -118,6 +118,34 @@ ensure_assignment() {
     assignment_id="$(jq -r 'if type == "array" then .[0].id else .id end' <<<"${matches}")"
     record_role_assignment "${logical_name}" "${principal}" "${role_id}" "${scope}" "${assignment_id}"
 }
+
+remove_recorded_assignment() {
+    local logical_name="$1"
+    local record assignment_id assignment_scope matches next
+    record="$(jq -c --arg name "${logical_name}" \
+        'first(.roleAssignments[]? | select(.name == $name)) // empty' \
+        "${AFD_PLS_E2E_STATE_FILE}")"
+    [[ -n "${record}" ]] || return 0
+
+    assignment_id="$(jq -r '.id // empty' <<<"${record}")"
+    assignment_scope="$(jq -r '.scope // empty' <<<"${record}")"
+    validate_role_assignment_boundary "${assignment_scope}" "${assignment_id}"
+    matches="$(az role assignment list --scope "${assignment_scope}" \
+        --fill-principal-name false -o json |
+        jq --arg id "${assignment_id}" \
+            '[.[] | select((.id | ascii_downcase) == ($id | ascii_downcase))] | length')"
+    if [[ "${matches}" -gt 0 ]]; then
+        echo "deleting superseded role assignment ${logical_name}"
+        az role assignment delete --ids "${assignment_id}"
+    fi
+
+    next="${AFD_PLS_E2E_STATE_FILE}.next"
+    jq --arg name "${logical_name}" \
+        '.roleAssignments = [.roleAssignments[]? | select(.name != $name)]' \
+        "${AFD_PLS_E2E_STATE_FILE}" >"${next}"
+    mv "${next}" "${AFD_PLS_E2E_STATE_FILE}"
+}
+
 ensure_assignment "${hub_gateway_principal_id}" "${hub_role_id}" "${resource_group_id}" hub-afd
 reader_role_id="$(az role definition list --name Reader --query '[0].name' -o tsv)"
 ensure_assignment "${hub_gateway_principal_id}" "${reader_role_id}" \
@@ -134,14 +162,16 @@ ensure_assignment "${member_1_principal_id}" "${member_role_id}" \
     "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER1_NODE_RESOURCE_GROUP}" member-1-pls
 ensure_assignment "${member_2_principal_id}" "${member_role_id}" \
     "/subscriptions/${EXPECTED_SUBSCRIPTION_ID}/resourceGroups/${AFD_PLS_E2E_MEMBER2_NODE_RESOURCE_GROUP}" member-2-pls
-vnet_id="$(az network vnet show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
-    --name "${AFD_PLS_E2E_VNET}" --query id -o tsv)"
 member_1_aks_principal_id="$(az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
     --name "${AFD_PLS_E2E_MEMBER1_CLUSTER}" --query identity.principalId -o tsv)"
 member_2_aks_principal_id="$(az aks show --resource-group "${AFD_PLS_E2E_RESOURCE_GROUP}" \
     --name "${AFD_PLS_E2E_MEMBER2_CLUSTER}" --query identity.principalId -o tsv)"
-ensure_assignment "${member_1_aks_principal_id}" "${member_role_id}" "${vnet_id}" member-1-aks-vnet
-ensure_assignment "${member_2_aks_principal_id}" "${member_role_id}" "${vnet_id}" member-2-aks-vnet
+remove_recorded_assignment member-1-aks-vnet
+remove_recorded_assignment member-2-aks-vnet
+ensure_assignment "${member_1_aks_principal_id}" "${member_role_id}" "${resource_group_id}" \
+    member-1-aks-network
+ensure_assignment "${member_2_aks_principal_id}" "${member_role_id}" "${resource_group_id}" \
+    member-2-aks-network
 
 for context_spec in \
     "${AFD_PLS_E2E_HUB_CLUSTER}:${AFD_PLS_E2E_HUB_CONTEXT}" \

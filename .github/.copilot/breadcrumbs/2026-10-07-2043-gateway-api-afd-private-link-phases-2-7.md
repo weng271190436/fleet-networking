@@ -1548,3 +1548,32 @@ instead of deprecated core/v1 Endpoints to verify the Azure Workload Identity we
 - Azure Policy emitted an advisory warning that the pinned external refresh-token image was not
   on its custom allowlist. The policy did not deny the Deployment, and both member controllers
   became Available.
+
+## NRMS NSG linked-authorization fix
+
+Member 2's echo Service remained without a LoadBalancer address. Kubernetes events showed
+`LinkedAuthorizationFailed`: the AKS control-plane identity could write `pls-2` through its
+VNet-scoped `Network Contributor` role but could not perform
+`Microsoft.Network/networkSecurityGroups/join/action` on the sibling NRMS policy-managed NSG
+attached to that subnet.
+
+The user approved granting both member AKS control-plane identities `Network Contributor` on the
+exact run-owned primary resource group. This covers the VNet, dedicated PLS subnets, and
+policy-created NSGs without subscription-wide access. Stage 04 will remove the two exact
+run-recorded VNet assignments before recording the resource-group replacements, so reruns do not
+leave orphaned role assignments.
+
+### NRMS NSG fix validation
+
+- Stage 04 deleted the two exact run-recorded `member-*-aks-vnet` assignments and created
+  `member-*-aks-network` assignments on primary RG `fleet-afd-pls-weiweng-01`.
+- State contains exactly seven unique assignments and no superseded VNet assignment records.
+- Member 2 Service reconciliation recovered after RBAC propagation and published private IP
+  `10.70.8.33`.
+- Azure created PLS `pls-afadd6ade373d447b9076a766b7c6f74` in the member 2 node RG with
+  provisioning state `Succeeded` and NAT subnet `pls-2`.
+- `pls-2` now reports `privateLinkServiceNetworkPolicies=Disabled` while retaining the attached
+  policy-managed NRMS NSG.
+- A second Stage 04 execution succeeded and retained exactly seven unique assignments, confirming
+  migration idempotency.
+- `bash -n` and `git diff --check` passed.
