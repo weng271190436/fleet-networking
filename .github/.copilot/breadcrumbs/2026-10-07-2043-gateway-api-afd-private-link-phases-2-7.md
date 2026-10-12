@@ -1638,3 +1638,9 @@ Gateway, kind, deterministic name, create/update action, provisioning state, and
 without request tokens, credentials, or private-link IDs. Part 1 describes the emitted progress.
 `make fmt`, focused `go test -v`, focused `go vet`, and `git diff --check` pass. The generic test
 runner did not discover Go tests, so validation used the repository's native Go commands.
+
+Gateway profile deletion already logs start, Azure confirmation with elapsed time, assignment
+finalizer release, and Gateway finalizer removal. Added per-origin withdrawal start/success/failure
+and elapsed-time logs for member/backend removal while a Gateway remains. Endpoint, route,
+origin-group, and security-policy removal during Gateway deletion is an Azure profile cascade, so
+the controller has no separate child delete calls to log.

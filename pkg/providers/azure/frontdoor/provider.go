@@ -337,6 +337,7 @@ func (p *Provider) WithdrawOrigins(
 	originGroupName string,
 	originNames []string,
 ) error {
+	gateway := desired.Namespace + "/" + desired.Name
 	profileName := ProfileName(desired)
 	profileParent := ResourceParent{ResourceGroup: p.resourceGroup}
 	current, err := p.clients.Get(ctx, ResourceProfile, profileParent, profileName)
@@ -352,11 +353,39 @@ func (p *Provider) WithdrawOrigins(
 	parent := ResourceParent{
 		ResourceGroup: p.resourceGroup, ProfileName: profileName, OriginGroupName: originGroupName,
 	}
+	klog.InfoS("Withdrawing Azure Front Door origins",
+		"gateway", gateway,
+		"profile", profileName,
+		"originGroup", originGroupName,
+		"originCount", len(originNames))
 	for _, name := range originNames {
+		started := time.Now()
+		klog.InfoS("Deleting withdrawn Azure Front Door origin",
+			"gateway", gateway,
+			"profile", profileName,
+			"originGroup", originGroupName,
+			"origin", name)
 		if err := p.clients.Delete(ctx, ResourceOrigin, parent, name); err != nil && !errors.Is(err, ErrNotFound) {
+			klog.ErrorS(err, "Failed to delete withdrawn Azure Front Door origin",
+				"gateway", gateway,
+				"profile", profileName,
+				"originGroup", originGroupName,
+				"origin", name,
+				"elapsed", time.Since(started).Round(time.Millisecond))
 			return retryable(fmt.Errorf("delete withdrawn origin %q: %w", name, err))
 		}
+		klog.InfoS("Deleted withdrawn Azure Front Door origin",
+			"gateway", gateway,
+			"profile", profileName,
+			"originGroup", originGroupName,
+			"origin", name,
+			"elapsed", time.Since(started).Round(time.Millisecond))
 	}
+	klog.InfoS("Completed Azure Front Door origin withdrawal",
+		"gateway", gateway,
+		"profile", profileName,
+		"originGroup", originGroupName,
+		"originCount", len(originNames))
 	return nil
 }
 
