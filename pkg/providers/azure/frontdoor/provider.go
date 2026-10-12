@@ -114,6 +114,7 @@ type ResourceGraph struct {
 // ResourceClient reconciles controller-owned AFD resources.
 type ResourceClient interface {
 	Get(context.Context, ResourceKind, ResourceParent, string) (Resource, error)
+	List(context.Context, ResourceKind, ResourceParent) ([]Resource, error)
 	Upsert(context.Context, ResourceKind, ResourceParent, Resource) (Resource, error)
 	Delete(context.Context, ResourceKind, ResourceParent, string) error
 }
@@ -297,6 +298,14 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 			result.Pending = append(result.Pending, fmt.Sprintf("%s/%s", item.kind, item.value.Name))
 		}
 	}
+	pruned, err := p.pruneStaleChildren(ctx, desired, graph)
+	if err != nil {
+		return result, err
+	}
+	if pruned {
+		result.Ready = false
+		result.Pending = append(result.Pending, "garbageCollection")
+	}
 	sort.Strings(result.Pending)
 	klog.InfoS("Observed Azure Front Door resource graph",
 		"gateway", gateway,
@@ -305,6 +314,146 @@ func (p *Provider) Reconcile(ctx context.Context, desired gatewaymodel.GlobalGat
 		"pending", result.Pending,
 		"endpointHostName", result.EndpointHostName)
 	return result, nil
+}
+
+func (p *Provider) pruneStaleChildren(
+	ctx context.Context,
+	desired gatewaymodel.GlobalGateway,
+	graph ResourceGraph,
+) (bool, error) {
+	gateway := desired.Namespace + "/" + desired.Name
+	routeParent := ResourceParent{
+		ResourceGroup: p.resourceGroup,
+		ProfileName:   graph.Profile.Name,
+		EndpointName:  graph.Endpoint.Name,
+	}
+	routes, err := p.clients.List(ctx, ResourceRoute, routeParent)
+	if err != nil {
+		return false, retryable(fmt.Errorf("list AFD routes for garbage collection: %w", err))
+	}
+	desiredRoutes := resourceNames(graph.Routes)
+	referencedOriginGroups := make(map[string]struct{})
+	pruned := false
+	for _, route := range routes {
+		if _, ok := desiredRoutes[route.Name]; ok || !isControllerChildName(ResourceRoute, route.Name) {
+			if route.OriginGroupID != "" {
+				referencedOriginGroups[strings.ToLower(route.OriginGroupID)] = struct{}{}
+			}
+			continue
+		}
+		klog.InfoS("Deleting stale Azure Front Door route",
+			"gateway", gateway, "profile", graph.Profile.Name, "route", route.Name)
+		if err := p.clients.Delete(ctx, ResourceRoute, routeParent, route.Name); err != nil && !errors.Is(err, ErrNotFound) {
+			return pruned, retryable(fmt.Errorf("delete stale route %q: %w", route.Name, err))
+		}
+		pruned = true
+	}
+
+	groupParent := ResourceParent{ResourceGroup: p.resourceGroup, ProfileName: graph.Profile.Name}
+	groups, err := p.clients.List(ctx, ResourceOriginGroup, groupParent)
+	if err != nil {
+		return pruned, retryable(fmt.Errorf("list AFD origin groups for garbage collection: %w", err))
+	}
+	desiredGroups := resourceNames(graph.OriginGroups)
+	desiredOriginsByGroup := desiredOriginNamesByGroup(graph)
+	for _, group := range groups {
+		if !isControllerChildName(ResourceOriginGroup, group.Name) {
+			continue
+		}
+		originParent := ResourceParent{
+			ResourceGroup:   p.resourceGroup,
+			ProfileName:     graph.Profile.Name,
+			OriginGroupName: group.Name,
+		}
+		origins, listErr := p.clients.List(ctx, ResourceOrigin, originParent)
+		if listErr != nil {
+			return pruned, retryable(fmt.Errorf("list origins for group %q: %w", group.Name, listErr))
+		}
+		desiredOrigins := desiredOriginsByGroup[group.Name]
+		unrelatedOriginsRemain := false
+		for _, origin := range origins {
+			if _, ok := desiredOrigins[origin.Name]; ok {
+				continue
+			}
+			if !isControllerChildName(ResourceOrigin, origin.Name) {
+				unrelatedOriginsRemain = true
+				continue
+			}
+			klog.InfoS("Deleting stale Azure Front Door origin",
+				"gateway", gateway,
+				"profile", graph.Profile.Name,
+				"originGroup", group.Name,
+				"origin", origin.Name)
+			if err := p.clients.Delete(ctx, ResourceOrigin, originParent, origin.Name); err != nil && !errors.Is(err, ErrNotFound) {
+				return pruned, retryable(fmt.Errorf("delete stale origin %q: %w", origin.Name, err))
+			}
+			pruned = true
+		}
+		if _, desiredGroup := desiredGroups[group.Name]; desiredGroup {
+			continue
+		}
+		groupID := strings.ToLower(originGroupID(p.subscriptionID, p.resourceGroup, graph.Profile.Name, group.Name))
+		_, stillReferenced := referencedOriginGroups[groupID]
+		if stillReferenced || unrelatedOriginsRemain {
+			continue
+		}
+		klog.InfoS("Deleting stale Azure Front Door origin group",
+			"gateway", gateway, "profile", graph.Profile.Name, "originGroup", group.Name)
+		if err := p.clients.Delete(ctx, ResourceOriginGroup, groupParent, group.Name); err != nil && !errors.Is(err, ErrNotFound) {
+			return pruned, retryable(fmt.Errorf("delete stale origin group %q: %w", group.Name, err))
+		}
+		pruned = true
+	}
+	return pruned, nil
+}
+
+func resourceNames(resources []Resource) map[string]struct{} {
+	result := make(map[string]struct{}, len(resources))
+	for _, resource := range resources {
+		result[resource.Name] = struct{}{}
+	}
+	return result
+}
+
+func desiredOriginNamesByGroup(graph ResourceGraph) map[string]map[string]struct{} {
+	result := make(map[string]map[string]struct{}, len(graph.OriginGroups))
+	for _, group := range graph.OriginGroups {
+		result[group.Name] = make(map[string]struct{})
+	}
+	for _, origin := range graph.Origins {
+		for _, group := range graph.OriginGroups {
+			if strings.EqualFold(origin.OriginGroupID,
+				originGroupIDFromResource(graph.Profile.ID, group.Name)) {
+				result[group.Name][origin.Name] = struct{}{}
+				break
+			}
+		}
+	}
+	return result
+}
+
+func originGroupIDFromResource(profileID, originGroupName string) string {
+	return profileID + "/originGroups/" + originGroupName
+}
+
+func isControllerChildName(kind ResourceKind, name string) bool {
+	var prefix string
+	switch kind {
+	case ResourceRoute:
+		prefix = "route"
+	case ResourceOriginGroup:
+		prefix = "og"
+	case ResourceOrigin:
+		prefix = "origin"
+	default:
+		return false
+	}
+	parts := strings.Split(name, "-")
+	if len(parts) < 3 || parts[0] != prefix || len(parts[len(parts)-1]) != 8 {
+		return false
+	}
+	_, err := hex.DecodeString(parts[len(parts)-1])
+	return err == nil
 }
 
 // Delete removes the owned profile. Azure cascades deletion to its controller-owned child graph.
@@ -429,6 +578,8 @@ func BuildResourceGraphWithHubIdentity(subscriptionID, resourceGroup, hubIdentit
 			Enabled:  true,
 		},
 	}
+	originGroupsByName := make(map[string]Resource)
+	originsByName := make(map[string]Resource)
 	for _, route := range normalized.Routes {
 		if len(route.Backends) != 1 {
 			return ResourceGraph{}, fmt.Errorf("route %s/%s must contain exactly one backend for the Phase 4 provider", route.Namespace, route.Name)
@@ -438,17 +589,21 @@ func BuildResourceGraphWithHubIdentity(subscriptionID, resourceGroup, hubIdentit
 			return ResourceGraph{}, fmt.Errorf("route %s/%s requires a non-empty private origin group", route.Namespace, route.Name)
 		}
 		originGroupID := originGroupID(subscriptionID, resourceGroup, profileName, backend.OriginGroupName)
-		graph.OriginGroups = append(graph.OriginGroups, Resource{
+		originGroup := Resource{
 			Name:            backend.OriginGroupName,
 			ID:              originGroupID,
 			HealthProbePath: backend.HealthProbePath,
-		})
+		}
+		if existing, ok := originGroupsByName[originGroup.Name]; ok && !reflect.DeepEqual(existing, originGroup) {
+			return ResourceGraph{}, fmt.Errorf("origin group %q has conflicting desired configuration", originGroup.Name)
+		}
+		originGroupsByName[originGroup.Name] = originGroup
 		for _, origin := range backend.Origins {
 			if origin.Connectivity != "PrivateLink" || origin.PrivateLinkResourceID == "" ||
 				origin.PrivateLinkLocation == "" || origin.RequestMessage == "" {
 				return ResourceGraph{}, fmt.Errorf("origin %q requires Private Link service, location, and request message", origin.Cluster)
 			}
-			graph.Origins = append(graph.Origins, Resource{
+			originResource := Resource{
 				Name:     origin.Name,
 				ID:       originID(subscriptionID, resourceGroup, profileName, backend.OriginGroupName, origin.Name),
 				HostName: origin.Endpoint,
@@ -461,7 +616,11 @@ func BuildResourceGraphWithHubIdentity(subscriptionID, resourceGroup, hubIdentit
 				PrivateLinkLocation:  origin.PrivateLinkLocation,
 				RequestMessage:       origin.RequestMessage,
 				OriginGroupID:        originGroupID,
-			})
+			}
+			if existing, ok := originsByName[originResource.Name]; ok && !reflect.DeepEqual(existing, originResource) {
+				return ResourceGraph{}, fmt.Errorf("origin %q has conflicting desired configuration", originResource.Name)
+			}
+			originsByName[originResource.Name] = originResource
 		}
 		patterns := []string{"/*"}
 		routeResourceName := deterministicName("route", route.Name, route.Namespace+"/"+route.Name)
@@ -475,6 +634,12 @@ func BuildResourceGraphWithHubIdentity(subscriptionID, resourceGroup, hubIdentit
 			ForwardingProtocol:  "HttpOnly",
 			LinkToDefaultDomain: true,
 		})
+	}
+	for _, group := range originGroupsByName {
+		graph.OriginGroups = append(graph.OriginGroups, group)
+	}
+	for _, origin := range originsByName {
+		graph.Origins = append(graph.Origins, origin)
 	}
 	sort.Slice(graph.OriginGroups, func(i, j int) bool { return graph.OriginGroups[i].Name < graph.OriginGroups[j].Name })
 	sort.Slice(graph.Origins, func(i, j int) bool { return graph.Origins[i].Name < graph.Origins[j].Name })

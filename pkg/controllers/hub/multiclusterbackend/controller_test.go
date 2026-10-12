@@ -168,6 +168,10 @@ func TestReconcileSelectsMembersAndAggregatesStatus(t *testing.T) { //nolint:goc
 				t.Error("member-a assignment is not marked for deletion")
 			}
 			withdrawing := assignments[i].DeepCopy()
+			removeFinalizer(withdrawing, fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer)
+			if err := k8sClient.Update(context.Background(), withdrawing); err != nil {
+				t.Fatalf("Update(connection-cleaned assignment) error = %v", err)
+			}
 			withdrawing.Status.Conditions = []metav1.Condition{{
 				Type:               string(fleetnetv1alpha1.ServiceOriginAssignmentConditionInfrastructureReady),
 				Status:             metav1.ConditionFalse,
@@ -193,6 +197,17 @@ func TestReconcileSelectsMembersAndAggregatesStatus(t *testing.T) { //nolint:goc
 	}
 	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("Reconcile() after complete deselection error = %v", err)
+	}
+	remainingAssignments := listAssignments(t, k8sClient)
+	for i := range remainingAssignments {
+		assignment := remainingAssignments[i].DeepCopy()
+		removeFinalizer(assignment, fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer)
+		if err := k8sClient.Update(context.Background(), assignment); err != nil {
+			t.Fatalf("Update(connection-cleaned final assignment) error = %v", err)
+		}
+	}
+	if _, err := reconciler.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile() after final connection cleanup error = %v", err)
 	}
 	if assignments := listAssignments(t, k8sClient); len(assignments) != 0 {
 		t.Errorf("assignment count after complete deselection = %d, want 0", len(assignments))

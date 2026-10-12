@@ -1644,3 +1644,129 @@ finalizer release, and Gateway finalizer removal. Added per-origin withdrawal st
 and elapsed-time logs for member/backend removal while a Gateway remains. Endpoint, route,
 origin-group, and security-policy removal during Gateway deletion is an Azure profile cascade, so
 the controller has no separate child delete calls to log.
+
+## HTTPRoute and MultiClusterBackend lifecycle convergence
+
+The user approved this lifecycle boundary:
+
+- transient Azure/controller errors and invalid/unsupported specs preserve the last working AFD
+  graph;
+- intentional valid removals converge Azure destructively;
+- a valid backend selector matching zero eligible clusters withdraws all origins and removes its
+  AFD route/backend graph;
+- selected members with temporarily zero ready origins remain fail-static.
+
+### Phase 1: Add failing lifecycle tests
+
+- [x] **Task L1.1: Test provider garbage collection and ownership.**
+  - Cover stale route deletion, backend swap, selected-member origin removal, unused origin-group
+    deletion, shared origin-group retention, empty desired graph, and preservation of unrelated
+    operator-created children.
+- [x] **Task L1.2: Test controller intent classification.**
+  - Cover HTTPRoute deletion, HTTPRoute-before-Gateway creation, backend deletion, previously
+    resolved missing backend, zero selected clusters, temporary zero ready origins, and invalid
+    route fail-static behavior.
+- [x] **Task L1.3: Test finalizer/lifecycle status.**
+  - Verify intentional cleanup publishes pending/unresolved status as appropriate while allowing
+    Azure convergence and that transient/provider failures retain prior success.
+
+### Phase 2: Implement exact Azure child reconciliation
+
+- [x] **Task L2.1: Add narrow Azure list adapters.**
+  - List routes under the deterministic endpoint, origin groups under the verified profile, and
+    origins under an exact origin group using pinned SDK pagers.
+- [x] **Task L2.2: Reconcile stale controller-owned children.**
+  - After desired upserts succeed, delete stale deterministic controller routes, stale origins,
+    and now-unreferenced origin groups in dependency order.
+  - Preserve unrelated children and any origin group still referenced by any remaining route.
+- [x] **Task L2.3: Deduplicate shared backend graph resources.**
+  - Multiple desired HTTPRoutes referencing one MCB must share one origin group/origin set without
+    duplicate upserts or premature garbage collection.
+
+### Phase 3: Implement intent-aware Gateway reconciliation
+
+- [x] **Task L3.1: Distinguish invalid/transient from intentional empty desired state.**
+  - Intentional: deleting HTTPRoute, deleting MCB, previously resolved backend now absent, and
+    current valid selector with `SelectedClusters=0`.
+  - Fail-static: unsupported route mutations, never-resolved missing backend, provider errors, and
+    selected members with temporarily no ready infrastructure.
+- [x] **Task L3.2: Reconcile an existing Gateway with zero desired routes.**
+  - A Gateway that already owns a profile must prune routes/backends while retaining its
+    profile/endpoint/WAF. A brand-new Gateway with no routes must not provision Azure prematurely.
+- [x] **Task L3.3: Preserve and publish correct status.**
+  - Intentional empty backends/routes report unresolved/pending where a Route still exists;
+    a Gateway with no attached Routes may remain accepted/programmed after successful pruning.
+
+### Phase 4: Validate and document
+
+- [x] **Task L4.1: Run focused tests, vet, formatting, and static checks.**
+- [x] **Task L4.2: Rebuild/redeploy the hub controller into `weiweng-01`.**
+- [x] **Task L4.3: Exercise route deletion, backend deletion, selector-zero, member removal, and
+  backend swap against real Azure.**
+- [x] **Task L4.4: Update Part 3 and this breadcrumb with actual versus expected behavior.**
+
+### Success criteria
+
+- Intentional HTTPRoute deletion removes its AFD route and garbage-collects an unreferenced backend
+  graph while preserving the Gateway profile/endpoint/WAF.
+- Backend replacement updates the route first and removes only the old unreferenced backend graph.
+- MCB deletion and selector-zero remove routes/origins/origin group without deleting the Gateway.
+- Member deselection removes only that member's origin.
+- Shared desired backend graphs and unrelated operator-created child resources remain.
+- Invalid specs and transient readiness/provider failures preserve the last working graph.
+
+### Lifecycle implementation details
+
+- Extended the narrow AFD client with paged route, origin-group, and origin listing.
+- Provider reconciliation now upserts desired resources first, then deletes stale deterministic
+  controller routes, stale origins, and unreferenced origin groups in dependency order.
+- Garbage collection retains unrelated child names, groups referenced by any remaining route, and
+  shared desired backend graphs. Resource-graph construction deduplicates shared groups/origins.
+- Existing Gateways may reconcile an empty route set; brand-new route-less Gateways remain pending
+  without provisioning Azure.
+- Intent-aware route errors allow destructive convergence for deleting/previously resolved
+  backends and current valid zero-match selectors. Unsupported specs, never-resolved references,
+  and selected-but-not-ready members remain fail-static.
+- Added `afd-connection-cleanup` as a member-owned assignment finalizer. Assignment deletion now
+  revalidates UID, generation, request token, PLS ID, requester, connection name, and exact request
+  description before deleting that PLS connection. The hub's origin finalizer and member's
+  connection finalizer complete independently.
+
+### Lifecycle live validation
+
+- Deployed hub and member iteration images to `weiweng-01`.
+- Member deselection deleted only member 1's AFD origin; re-adding the label restored it.
+- Backend replacement updated the existing route to `echo-v2` before deleting the old `echo`
+  origins/group. Switching back and deleting `echo-v2` also converged.
+- HTTPRoute deletion removed the AFD route and then its unreferenced origins/group while preserving
+  profile and endpoint.
+- Unsupported `/unsupported` path produced unresolved status and preserved the exact prior Azure
+  route/group.
+- The first selector-zero test exposed that valid no-match status is
+  `Accepted=False/NoMatchingClusters`; intent classification was corrected and the retest deleted
+  the route/backend graph while preserving profile/endpoint/WAF.
+- MCB deletion removed its route/backend graph and assignments. Recreating the MCB under the
+  already-existing HTTPRoute demonstrated out-of-order convergence.
+- Repeated recreation exposed Azure reuse of old approved managed-private-endpoint connections:
+  new AFD origins had new assignment messages, but PLS resources retained only old approvals and
+  emitted no new requests.
+- After one-time exact cleanup of pre-finalizer orphaned `fleet:` connections, fresh origins
+  generated and received two new approvals.
+- With the dual-finalizer controllers deployed, deleting the MCB automatically removed both exact
+  current PLS connections before assignments disappeared. Recreating it generated two fresh
+  requests, both were approved, and `Programmed=True selected=2 ready=2` returned.
+- Azure child creates/deletes commonly took several minutes; all bounded tests ultimately passed.
+- The final environment is restored with Gateway, HTTPRoute, MCB, two ready/approved origins,
+  profile/endpoint/WAF, and both member applications intact.
+
+### Lifecycle final validation
+
+- `make fmt` passed.
+- Focused tests passed for member assignment approval/cleanup, hub MCB selection/finalizers,
+  Gateway intent/status, normalized model, and AFD provider/list/prune behavior.
+- Full `go vet ./...` passed.
+- `go test ./...` reached existing envtest suites but failed because
+  `/usr/local/kubebuilder/bin/etcd` is absent; affected suites failed in `BeforeSuite` before
+  running specs. This is an environment/tooling prerequisite, not a lifecycle test failure.
+- All four operator-document Bash fences pass `bash -n`.
+- `git diff --check` passed.

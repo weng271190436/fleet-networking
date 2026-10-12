@@ -37,6 +37,7 @@ type fakeProvider struct {
 	reconciles   int
 	deletes      int
 	withdraws    int
+	desired      []gatewaymodel.GlobalGateway
 }
 
 func TestSetListenersSetsRequiredTransitionTimes(t *testing.T) {
@@ -53,8 +54,9 @@ func TestSetListenersSetsRequiredTransitionTimes(t *testing.T) {
 	}
 }
 
-func (p *fakeProvider) Reconcile(context.Context, gatewaymodel.GlobalGateway) (frontdoor.Result, error) {
+func (p *fakeProvider) Reconcile(_ context.Context, desired gatewaymodel.GlobalGateway) (frontdoor.Result, error) {
 	p.reconciles++
+	p.desired = append(p.desired, desired)
 	return p.result, p.reconcileErr
 }
 
@@ -290,6 +292,133 @@ func TestReconcileDeleteLifecycle(t *testing.T) {
 			}
 			if containsString(got.Finalizers, GatewayFinalizer) != tt.wantFinalizer {
 				t.Fatalf("Gateway finalizers = %v, want retained %t", got.Finalizers, tt.wantFinalizer)
+			}
+		})
+	}
+}
+
+func TestReconcile_IntentionalEmptyDesiredStateInvokesProviderPruning(t *testing.T) {
+	tests := []struct {
+		name    string
+		objects func(*gatewayv1.Gateway) []client.Object
+	}{
+		{
+			name: "HTTPRoute deleted",
+			objects: func(_ *gatewayv1.Gateway) []client.Object {
+				return nil
+			},
+		},
+		{
+			name: "valid selector matches zero clusters",
+			objects: func(_ *gatewayv1.Gateway) []client.Object {
+				backend := readyBackend()
+				backend.Status = fleetnetv1alpha1.MultiClusterBackendStatus{
+					ObservedGeneration: backend.Generation,
+					SelectedClusters:   0,
+					Conditions: []metav1.Condition{{
+						Type: string(fleetnetv1alpha1.MultiClusterBackendConditionAccepted), Status: metav1.ConditionFalse,
+						Reason: string(fleetnetv1alpha1.MultiClusterBackendReasonNoMatchingClusters), ObservedGeneration: backend.Generation,
+					}},
+				}
+				return []client.Object{attachedRoute(), backend}
+			},
+		},
+		{
+			name: "previously resolved backend is deleted",
+			objects: func(_ *gatewayv1.Gateway) []client.Object {
+				route := attachedRoute()
+				route.Status.Parents = []gatewayv1.RouteParentStatus{{
+					ControllerName: ControllerName,
+					ParentRef:      gatewayv1.ParentReference{Name: "global"},
+					Conditions: []metav1.Condition{{
+						Type: string(gatewayv1.RouteConditionResolvedRefs), Status: metav1.ConditionTrue,
+						Reason: string(gatewayv1.RouteReasonResolvedRefs), ObservedGeneration: route.Generation,
+					}},
+				}}
+				return []client.Object{route}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := testScheme(t)
+			gateway := validGateway()
+			gateway.Finalizers = []string{GatewayFinalizer}
+			objects := []client.Object{acceptedGatewayClass(), gateway}
+			objects = append(objects, tt.objects(gateway)...)
+			provider := &fakeProvider{result: frontdoor.Result{Ready: true, EndpointHostName: "global.azurefd.net"}}
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{},
+					&gatewayv1.GatewayClass{}, &fleetnetv1alpha1.MultiClusterBackend{}).
+				WithObjects(objects...).Build()
+			reconciler := &Reconciler{Client: kubeClient, Provider: provider}
+
+			if _, err := reconciler.Reconcile(context.Background(), requestFor(gateway)); err != nil {
+				t.Fatal(err)
+			}
+			if provider.reconciles != 1 || len(provider.desired) != 1 || len(provider.desired[0].Routes) != 0 {
+				t.Fatalf("provider reconciles=%d desired=%#v, want one empty-route reconciliation",
+					provider.reconciles, provider.desired)
+			}
+		})
+	}
+}
+
+func TestReconcile_InvalidOrTransientRoutePreservesAzureGraph(t *testing.T) {
+	tests := []struct {
+		name    string
+		objects func() []client.Object
+	}{
+		{
+			name: "unsupported path",
+			objects: func() []client.Object {
+				route := attachedRoute()
+				path := "/unsupported"
+				route.Spec.Rules[0].Matches[0].Path.Value = &path
+				return []client.Object{route, readyBackend(), readyAssignment(readyBackend(), true)}
+			},
+		},
+		{
+			name: "selected member temporarily has no ready origin",
+			objects: func() []client.Object {
+				backend := readyBackend()
+				backend.Status = fleetnetv1alpha1.MultiClusterBackendStatus{
+					ObservedGeneration: backend.Generation,
+					SelectedClusters:   1,
+					Conditions: []metav1.Condition{{
+						Type: string(fleetnetv1alpha1.MultiClusterBackendConditionAccepted), Status: metav1.ConditionTrue,
+						Reason: string(fleetnetv1alpha1.MultiClusterBackendReasonAccepted), ObservedGeneration: backend.Generation,
+					}},
+				}
+				return []client.Object{attachedRoute(), backend}
+			},
+		},
+		{
+			name: "backend has never resolved",
+			objects: func() []client.Object {
+				return []client.Object{attachedRoute()}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := testScheme(t)
+			gateway := validGateway()
+			gateway.Finalizers = []string{GatewayFinalizer}
+			objects := []client.Object{acceptedGatewayClass(), gateway}
+			objects = append(objects, tt.objects()...)
+			provider := &fakeProvider{}
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(&gatewayv1.Gateway{}, &gatewayv1.HTTPRoute{},
+					&gatewayv1.GatewayClass{}, &fleetnetv1alpha1.MultiClusterBackend{}).
+				WithObjects(objects...).Build()
+			reconciler := &Reconciler{Client: kubeClient, Provider: provider}
+
+			if _, err := reconciler.Reconcile(context.Background(), requestFor(gateway)); err != nil {
+				t.Fatal(err)
+			}
+			if provider.reconciles != 0 {
+				t.Fatalf("provider reconciles=%d, want fail-static preservation", provider.reconciles)
 			}
 		})
 	}

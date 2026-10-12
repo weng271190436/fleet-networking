@@ -134,6 +134,35 @@ func (c *azurePrivateEndpointConnectionClient) Approve(
 	return nil
 }
 
+func (c *azurePrivateEndpointConnectionClient) Delete(
+	ctx context.Context,
+	privateLinkServiceID, connectionName string,
+) error {
+	resourceGroupName, serviceName, err := privateLinkServiceCoordinates(privateLinkServiceID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(connectionName) == "" {
+		return fmt.Errorf("private endpoint connection name is empty")
+	}
+	poller, err := c.client.BeginDeletePrivateEndpointConnection(
+		ctx, resourceGroupName, serviceName, connectionName, nil,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"begin deleting private endpoint connection %q for Private Link Service %q: %w",
+			connectionName, privateLinkServiceID, err,
+		)
+	}
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		return fmt.Errorf(
+			"wait for private endpoint connection %q deletion for Private Link Service %q: %w",
+			connectionName, privateLinkServiceID, err,
+		)
+	}
+	return nil
+}
+
 func privateLinkServiceCoordinates(privateLinkServiceID string) (string, string, error) {
 	resourceID, err := arm.ParseResourceID(strings.TrimSpace(privateLinkServiceID))
 	if err != nil {

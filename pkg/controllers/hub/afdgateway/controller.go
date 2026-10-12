@@ -65,8 +65,16 @@ type routeValidationError struct{ message string }
 
 func (e *routeValidationError) Error() string { return e.message }
 
+type intentionalRouteRemovalError struct{ message string }
+
+func (e *intentionalRouteRemovalError) Error() string { return e.message }
+
 func invalidRoute(message string, args ...any) error {
 	return &routeValidationError{message: fmt.Sprintf(message, args...)}
+}
+
+func intentionalRouteRemoval(message string, args ...any) error {
+	return &intentionalRouteRemovalError{message: fmt.Sprintf(message, args...)}
 }
 
 // Reconcile publishes GatewayClass acceptance without adopting other classes.
@@ -138,11 +146,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 	allApproved := true
 	routeErrors := make(map[types.NamespacedName]error)
+	blockingRouteError := false
 	for i := range routes {
 		routeModel, approved, routeErr := buildRoute(ctx, r.Client, &routes[i], gateway.Name)
 		if routeErr != nil {
 			routeErrors[client.ObjectKeyFromObject(&routes[i])] = routeErr
 			allApproved = false
+			var intentional *intentionalRouteRemovalError
+			if !errors.As(routeErr, &intentional) {
+				blockingRouteError = true
+			}
 			continue
 		}
 		desired.Routes = append(desired.Routes, routeModel)
@@ -154,7 +167,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return ctrl.Result{}, err
 	}
 
-	if len(routeErrors) != 0 || len(desired.Routes) == 0 {
+	if blockingRouteError || (len(desired.Routes) == 0 && !containsString(gateway.Finalizers, GatewayFinalizer)) {
 		if err := r.publishPending(ctx, &gateway, routes, routeErrors, false, "references are not resolved"); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -179,6 +192,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			}
 		}
 		return ctrl.Result{}, fmt.Errorf("reconcile Azure Front Door for Gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
+	}
+	if len(routeErrors) != 0 {
+		if err := r.publishPending(ctx, &gateway, routes, routeErrors, false, "intentional route or backend removal is reconciled"); err != nil {
+			return ctrl.Result{}, err
+		}
+		if !result.Ready {
+			return ctrl.Result{RequeueAfter: requeueDelay}, nil
+		}
+		return ctrl.Result{}, nil
 	}
 	programmed := result.Ready && allApproved
 	message := "Azure Front Door configuration is ready"
@@ -241,7 +263,7 @@ func (r *Reconciler) attachedRoutes(ctx context.Context, gateway *gatewayv1.Gate
 	}
 	result := make([]gatewayv1.HTTPRoute, 0, len(list.Items))
 	for i := range list.Items {
-		if routeAttaches(&list.Items[i], gateway.Name) {
+		if list.Items[i].DeletionTimestamp.IsZero() && routeAttaches(&list.Items[i], gateway.Name) {
 			result = append(result, list.Items[i])
 		}
 	}
@@ -275,12 +297,33 @@ func buildRoute(ctx context.Context, c client.Client, route *gatewayv1.HTTPRoute
 	var backend fleetnetv1alpha1.MultiClusterBackend
 	key := types.NamespacedName{Namespace: route.Namespace, Name: string(ref.Name)}
 	if err := c.Get(ctx, key, &backend); err != nil {
+		if apierrors.IsNotFound(err) && routePreviouslyResolved(route) {
+			return gatewaymodel.Route{}, false,
+				intentionalRouteRemoval("previously resolved MultiClusterBackend %s was deleted", key)
+		}
 		return gatewaymodel.Route{}, false, fmt.Errorf("resolve MultiClusterBackend %s: %w", key, err)
+	}
+	if !backend.DeletionTimestamp.IsZero() {
+		return gatewaymodel.Route{}, false,
+			intentionalRouteRemoval("MultiClusterBackend %s is terminating", key)
+	}
+	accepted := meta.FindStatusCondition(
+		backend.Status.Conditions,
+		string(fleetnetv1alpha1.MultiClusterBackendConditionAccepted),
+	)
+	if backend.Status.ObservedGeneration == backend.Generation &&
+		accepted != nil && accepted.ObservedGeneration == backend.Generation &&
+		(accepted.Status == metav1.ConditionTrue ||
+			accepted.Reason == string(fleetnetv1alpha1.MultiClusterBackendReasonNoMatchingClusters)) &&
+		backend.Status.SelectedClusters == 0 {
+		return gatewaymodel.Route{}, false,
+			intentionalRouteRemoval("MultiClusterBackend %s intentionally selects zero clusters", key)
 	}
 	var assignments fleetnetv1alpha1.ServiceOriginAssignmentList
 	if err := c.List(ctx, &assignments); err != nil {
 		return gatewaymodel.Route{}, false, fmt.Errorf("list ServiceOriginAssignments: %w", err)
 	}
+
 	active := make([]fleetnetv1alpha1.ServiceOriginAssignment, 0)
 	allApproved := true
 	for i := range assignments.Items {
@@ -317,6 +360,21 @@ func buildRoute(ctx context.Context, c client.Client, route *gatewayv1.HTTPRoute
 			OriginGroupName: normalized.OriginGroupName, Origins: normalized.Origins,
 		}},
 	}, allApproved, nil
+}
+
+func routePreviouslyResolved(route *gatewayv1.HTTPRoute) bool {
+	for i := range route.Status.Parents {
+		parent := &route.Status.Parents[i]
+		if parent.ControllerName != ControllerName {
+			continue
+		}
+		resolved := meta.FindStatusCondition(parent.Conditions, string(gatewayv1.RouteConditionResolvedRefs))
+		if resolved != nil && resolved.Status == metav1.ConditionTrue &&
+			resolved.ObservedGeneration == route.Generation {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRoute(route *gatewayv1.HTTPRoute, gatewayName string) (gatewayv1.HTTPBackendRef, error) {

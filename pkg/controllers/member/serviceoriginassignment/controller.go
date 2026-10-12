@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -55,6 +56,7 @@ type PrivateEndpointConnectionClient interface {
 	List(ctx context.Context, privateLinkServiceID string) ([]*armnetwork.PrivateEndpointConnection, error)
 	Get(ctx context.Context, privateLinkServiceID, connectionName string) (*armnetwork.PrivateEndpointConnection, error)
 	Approve(ctx context.Context, privateLinkServiceID string, connection *armnetwork.PrivateEndpointConnection) error
+	Delete(ctx context.Context, privateLinkServiceID, connectionName string) error
 }
 
 // Reconciler discovers origin infrastructure for a ServiceOriginAssignment.
@@ -73,6 +75,7 @@ type Reconciler struct {
 
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 //+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments,verbs=get;list;watch
+//+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments/finalizers,verbs=update;patch
 //+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=serviceoriginassignments/status,verbs=get;update;patch
 
 // Reconcile resolves the referenced Service and publishes discovered Azure origin facts.
@@ -100,11 +103,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			"Private Link approval is waiting for current Service and infrastructure validation")
 	}
 	if !assignment.DeletionTimestamp.IsZero() {
+		if err := r.deleteAssignmentConnection(ctx, req.NamespacedName, &assignment); err != nil {
+			return ctrl.Result{}, err
+		}
 		setCondition(&status, assignment.Generation,
 			fleetnetv1alpha1.ServiceOriginAssignmentConditionPrivateLinkApproved,
 			metav1.ConditionFalse, fleetnetv1alpha1.ServiceOriginAssignmentReasonApprovalValidationFailed,
 			"assignment is terminating; Private Link approval is disabled")
-		return ctrl.Result{}, r.updateStatus(ctx, &assignment, status)
+		if err := r.updateStatus(ctx, &assignment, status); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.releaseConnectionCleanupFinalizer(ctx, req.NamespacedName)
 	}
 	serviceKey := types.NamespacedName{
 		Namespace: assignment.Spec.ServiceRef.Namespace,
@@ -194,6 +203,126 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return ctrl.Result{}, err
 	}
 	return r.reconcileApproval(ctx, req.NamespacedName, &assignment)
+}
+
+func (r *Reconciler) deleteAssignmentConnection(
+	ctx context.Context,
+	assignmentKey types.NamespacedName,
+	assignment *fleetnetv1alpha1.ServiceOriginAssignment,
+) error {
+	if r.PrivateEndpointConnectionClient == nil || assignment.Status.Origin == nil {
+		return nil
+	}
+	privateLinkServiceID := strings.TrimSpace(assignment.Status.Origin.PrivateLinkServiceID)
+	if privateLinkServiceID == "" {
+		return nil
+	}
+	connections, err := r.PrivateEndpointConnectionClient.List(ctx, privateLinkServiceID)
+	if err != nil {
+		return fmt.Errorf("list Private Link connections during assignment deletion: %w", err)
+	}
+	connection, _, err := findApprovalConnection(
+		assignment,
+		privateLinkServiceID,
+		privateLinkServiceID,
+		connections,
+		r.RequesterSubscriptionAllowlist,
+	)
+	if err != nil {
+		return fmt.Errorf("validate Private Link connection during assignment deletion: %w", err)
+	}
+	if connection == nil {
+		return nil
+	}
+	connectionName := strings.TrimSpace(ptr.Deref(connection.Name, ""))
+	current, validatedConnection, err := r.revalidateConnectionDeletion(
+		ctx, assignmentKey, assignment, privateLinkServiceID, connectionName,
+	)
+	if err != nil {
+		return err
+	}
+	if validatedConnection == nil {
+		return nil
+	}
+	if err := r.PrivateEndpointConnectionClient.Delete(ctx, privateLinkServiceID, connectionName); err != nil {
+		return fmt.Errorf("delete Private Link connection %q for terminating assignment: %w", connectionName, err)
+	}
+	klog.InfoS("Deleted exact Private Link connection for terminating assignment",
+		"serviceOriginAssignment", klog.KObj(current),
+		"privateEndpointConnection", connectionName)
+	return nil
+}
+
+func (r *Reconciler) revalidateConnectionDeletion(
+	ctx context.Context,
+	assignmentKey types.NamespacedName,
+	previousAssignment *fleetnetv1alpha1.ServiceOriginAssignment,
+	privateLinkServiceID, connectionName string,
+) (*fleetnetv1alpha1.ServiceOriginAssignment, *armnetwork.PrivateEndpointConnection, error) {
+	var current fleetnetv1alpha1.ServiceOriginAssignment
+	if err := r.HubClient.Get(ctx, assignmentKey, &current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("re-fetch terminating ServiceOriginAssignment before connection deletion: %w", err)
+	}
+	if current.DeletionTimestamp.IsZero() ||
+		current.UID != previousAssignment.UID ||
+		current.Generation != previousAssignment.Generation ||
+		current.Spec.Approval.RequestToken != previousAssignment.Spec.Approval.RequestToken ||
+		current.Status.Origin == nil ||
+		!strings.EqualFold(strings.TrimSpace(current.Status.Origin.PrivateLinkServiceID), privateLinkServiceID) {
+		return &current, nil, approvalValidationErrorf(
+			"terminating assignment identity, token, or Private Link Service changed before connection deletion",
+		)
+	}
+	connection, err := r.PrivateEndpointConnectionClient.Get(ctx, privateLinkServiceID, connectionName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("re-fetch Private Link connection before deletion: %w", err)
+	}
+	validated, _, err := findApprovalConnection(
+		&current,
+		privateLinkServiceID,
+		privateLinkServiceID,
+		[]*armnetwork.PrivateEndpointConnection{connection},
+		r.RequesterSubscriptionAllowlist,
+	)
+	if err != nil {
+		return &current, nil, approvalValidationErrorf(
+			"Private Link connection changed before deletion: %v", err,
+		)
+	}
+	if validated == nil {
+		return &current, nil, approvalValidationErrorf(
+			"Private Link connection no longer matches the terminating assignment",
+		)
+	}
+	return &current, validated, nil
+}
+
+func (r *Reconciler) releaseConnectionCleanupFinalizer(
+	ctx context.Context,
+	assignmentKey types.NamespacedName,
+) error {
+	var current fleetnetv1alpha1.ServiceOriginAssignment
+	if err := r.HubClient.Get(ctx, assignmentKey, &current); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	finalizer := fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer
+	for i, value := range current.Finalizers {
+		if value != finalizer {
+			continue
+		}
+		old := current.DeepCopy()
+		current.Finalizers = append(current.Finalizers[:i], current.Finalizers[i+1:]...)
+		if err := r.HubClient.Patch(ctx, &current, client.MergeFrom(old)); err != nil {
+			return fmt.Errorf("remove connection cleanup finalizer from ServiceOriginAssignment %s: %w", assignmentKey, err)
+		}
+		klog.InfoS("Released Private Link connection cleanup finalizer",
+			"serviceOriginAssignment", klog.KObj(&current))
+		return nil
+	}
+	return nil
 }
 
 func (r *Reconciler) reconcileApproval(

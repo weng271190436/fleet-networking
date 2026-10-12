@@ -265,6 +265,50 @@ func TestReconcileObservesAlreadyApprovedConnection(t *testing.T) {
 		metav1.ConditionTrue, fleetnetv1alpha1.ServiceOriginAssignmentReasonConnectionApproved)
 }
 
+func TestReconcileDeletingAssignmentDeletesOnlyExactConnection(t *testing.T) {
+	assignment := testAssignment()
+	now := metav1.Now()
+	assignment.DeletionTimestamp = &now
+	assignment.Finalizers = []string{
+		"test-origin-finalizer",
+		fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer,
+	}
+	assignment.Status = fleetnetv1alpha1.ServiceOriginAssignmentStatus{
+		ObservedGeneration: assignment.Generation,
+		Origin: &fleetnetv1alpha1.ServiceOriginAssignmentOriginStatus{
+			AzureLocation:        "eastus",
+			LoadBalancerAddress:  testIngressIP,
+			PrivateLinkServiceID: testPLSID,
+		},
+	}
+	hubClient := newCountingHubClient(t, assignment)
+	connections := &fakePrivateEndpointConnectionClient{
+		listItems: []*armnetwork.PrivateEndpointConnection{
+			testConnection("unrelated", "Approved", "other", testManagedPrivateEndpointID),
+			testConnection("expected", "Approved", testRequestMessage, testManagedPrivateEndpointID),
+		},
+	}
+	reconciler := readyApprovalReconciler(hubClient, newReadyMemberClient(t), connections)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: assignment.Namespace, Name: assignment.Name},
+	}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if len(connections.deletedNames) != 1 || connections.deletedNames[0] != "expected" {
+		t.Fatalf("deleted connections = %#v, want [expected]", connections.deletedNames)
+	}
+	var got fleetnetv1alpha1.ServiceOriginAssignment
+	if err := hubClient.Get(context.Background(), client.ObjectKeyFromObject(assignment), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, finalizer := range got.Finalizers {
+		if finalizer == fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer {
+			t.Fatalf("connection cleanup finalizer was not removed: %v", got.Finalizers)
+		}
+	}
+}
+
 func TestReconcilePreservesApprovedStatusOnTransientReadError(t *testing.T) {
 	assignment := testAssignment()
 	assignment.Status = fleetnetv1alpha1.ServiceOriginAssignmentStatus{
@@ -475,7 +519,9 @@ type fakePrivateEndpointConnectionClient struct {
 	listErr       error
 	getErr        error
 	approveErr    error
+	deleteErr     error
 	approvedNames []string
+	deletedNames  []string
 	listHook      func()
 }
 
@@ -505,6 +551,14 @@ func (f *fakePrivateEndpointConnectionClient) Approve(
 		return f.approveErr
 	}
 	f.approvedNames = append(f.approvedNames, ptr.Deref(connection.Name, ""))
+	return nil
+}
+
+func (f *fakePrivateEndpointConnectionClient) Delete(_ context.Context, _ string, name string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deletedNames = append(f.deletedNames, name)
 	return nil
 }
 

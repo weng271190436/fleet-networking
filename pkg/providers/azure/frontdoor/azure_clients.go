@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
@@ -116,6 +117,60 @@ func (c *AzureClients) Get(ctx context.Context, kind ResourceKind, parent Resour
 		return Resource{}, fmt.Errorf("Azure GET %s %q: %w", kind, name, err)
 	}
 	return resource, nil
+}
+
+// List retrieves AFD child resources from an exact parent hierarchy.
+func (c *AzureClients) List(ctx context.Context, kind ResourceKind, parent ResourceParent) ([]Resource, error) {
+	resources := make([]Resource, 0)
+	switch kind {
+	case ResourceOriginGroup:
+		pager := c.originGroups.NewListByProfilePager(parent.ResourceGroup, parent.ProfileName, nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("list AFD origin groups: %w", err)
+			}
+			for _, value := range page.Value {
+				if value != nil {
+					resources = append(resources, resourceFromOriginGroup(*value))
+				}
+			}
+		}
+	case ResourceOrigin:
+		pager := c.origins.NewListByOriginGroupPager(
+			parent.ResourceGroup, parent.ProfileName, parent.OriginGroupName, nil,
+		)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("list AFD origins in group %q: %w", parent.OriginGroupName, err)
+			}
+			for _, value := range page.Value {
+				if value != nil {
+					resources = append(resources, resourceFromOrigin(*value))
+				}
+			}
+		}
+	case ResourceRoute:
+		pager := c.routes.NewListByEndpointPager(
+			parent.ResourceGroup, parent.ProfileName, parent.EndpointName, nil,
+		)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("list AFD routes under endpoint %q: %w", parent.EndpointName, err)
+			}
+			for _, value := range page.Value {
+				if value != nil {
+					resources = append(resources, resourceFromRoute(*value))
+				}
+			}
+		}
+	default:
+		return nil, fmt.Errorf("listing AFD resource kind %q is unsupported", kind)
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
+	return resources, nil
 }
 
 // Upsert creates or updates an AFD resource and waits for the ARM operation.

@@ -3,9 +3,10 @@
 [Previous: global Service scenario](02-global-service-scenario.md) ·
 [Next: cleanup](04-cleanup.md)
 
-> **Status: In progress.** Retained run `p7-10082105` recorded member withdrawal and verified that
-> Gateway deletion removed the owned AFD profile while preserving WAF, Services, ILBs, and PLS
-> resources. Fail-static evidence and final cleanup remain.
+> **Status: In progress.** Run `weiweng-01` validated member origin withdrawal/re-addition,
+> HTTPRoute deletion, backend replacement, selector-zero convergence, MCB deletion, invalid-route
+> fail-static preservation, and exact PLS connection cleanup across repeated recreation. Gateway
+> deletion ownership was previously validated. Controller-outage evidence and final cleanup remain.
 
 In a new shell, export the same approved run values and initialize helpers before the first
 scenario command:
@@ -202,7 +203,44 @@ Snapshots are appended to:
 Phase 7 is still incomplete until a human has witnessed every expected result, retained this
 evidence, run cleanup, and verified deletion.
 
-## 4. Scenario evidence and debugging
+## 4. HTTPRoute and MultiClusterBackend lifecycle contract
+
+The controller now distinguishes intentional removals from invalid or transient states:
+
+| Change | Expected AFD behavior |
+|---|---|
+| Create HTTPRoute before MCB | Route remains unresolved; creating the MCB later converges normally |
+| Delete HTTPRoute | Delete its AFD route, then delete unreferenced origins/origin group; preserve profile/endpoint/WAF |
+| Replace backend A with B | Create B, update the route to B, then garbage-collect unreferenced A |
+| Apply unsupported route path/backend shape | Report unresolved/pending and preserve the last working graph |
+| Remove one selected member label | Delete only that member origin; preserve route/group/other origins |
+| Valid selector matches zero members | Delete route and complete backend graph; preserve profile/endpoint/WAF |
+| Selected members temporarily have no ready origins | Preserve the last working graph fail-static |
+| Delete MCB | Delete assignments, exact PLS connections, AFD route, origins, and unreferenced group |
+
+An assignment has two independent finalizers:
+
+```text
+afd-origin-cleanup
+  → hub Gateway controller withdraws the exact AFD origin
+
+afd-connection-cleanup
+  → member controller revalidates and deletes the exact
+    fleet:<assignment-uid>:<request-token> PLS connection
+```
+
+Both finalizers must complete before the assignment disappears. This prevents Azure Front Door
+from reusing stale approved managed-private-endpoint connections when an MCB is deleted and
+recreated.
+
+Only deterministic controller child names under a verified Gateway-owned profile are
+garbage-collected. Unrelated operator-created child resources and backend graphs still referenced
+by another desired route are preserved.
+
+Azure child deletion can take several minutes. Kubernetes status reflects pending/unresolved
+intent immediately, while Azure CLI resource lists converge asynchronously.
+
+## 5. Scenario evidence and debugging
 
 The following are **READ ONLY**. Initialize deterministic names in each new shell:
 

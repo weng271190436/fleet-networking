@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -34,6 +35,7 @@ func TestReconcile_CreateUpdateNoOpAndProvisioning(t *testing.T) {
 		"originGroup:get", "originGroup:upsert", "origin:get", "origin:upsert",
 		"origin:get", "origin:upsert", "route:get", "route:upsert",
 		"securityPolicy:get", "securityPolicy:upsert",
+		"route:list", "originGroup:list", "origin:list",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("create operations = %#v, want %#v", got, want)
 	}
@@ -68,6 +70,150 @@ func TestEqualDesired_NormalizesAzureLocationCase(t *testing.T) {
 	desired := Resource{Name: "profile", Location: "global", SKU: "Premium_AzureFrontDoor"}
 	if !equalDesired(current, desired) {
 		t.Fatalf("equalDesired(%#v, %#v) = false, want true", current, desired)
+	}
+}
+
+func TestReconcile_PrunesReplacedBackendGraphAndPreservesUnrelatedChildren(t *testing.T) {
+	clients := newFakeClients()
+	provider := NewProvider("sub", "afd-rg", clients)
+	oldDesired := testGateway()
+	if _, err := provider.Reconcile(context.Background(), oldDesired); err != nil {
+		t.Fatal(err)
+	}
+	clients.markSucceeded()
+	oldBackend := oldDesired.Routes[0].Backends[0]
+	unrelated := Resource{Name: "operator-created-origin-group"}
+	clients.resources[resourceKey(ResourceOriginGroup, unrelated.Name)] = unrelated
+
+	newDesired := testGateway()
+	newDesired.Routes[0].Backends[0].Name = "echo-v2"
+	newDesired.Routes[0].Backends[0].OriginGroupName = "og-echo-v2-12345678"
+	newDesired.Routes[0].Backends[0].Origins = []gatewaymodel.Origin{{
+		Cluster: "member-c", Name: "origin-member-c-12345678", Endpoint: "10.0.0.3",
+		Weight: 1000, Connectivity: "PrivateLink",
+		PrivateLinkResourceID: "/subscriptions/sub/resourceGroups/c/providers/Microsoft.Network/privateLinkServices/pls-c",
+		PrivateLinkLocation:   "eastus", RequestMessage: "fleet:assignment-c:token-c",
+	}}
+	clients.operations = nil
+	if _, err := provider.Reconcile(context.Background(), newDesired); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := clients.resources[resourceKey(ResourceOriginGroup, oldBackend.OriginGroupName)]; ok {
+		t.Fatal("old origin group still exists")
+	}
+	for _, origin := range oldBackend.Origins {
+		if _, ok := clients.resources[resourceKey(ResourceOrigin, origin.Name)]; ok {
+			t.Errorf("old origin %q still exists", origin.Name)
+		}
+	}
+	if _, ok := clients.resources[resourceKey(ResourceOriginGroup, unrelated.Name)]; !ok {
+		t.Fatal("unrelated origin group was deleted")
+	}
+	if !operationBefore(clients.operations, "route:upsert", "originGroup:delete") {
+		t.Fatalf("operations = %#v, want route update before old group deletion", clients.operations)
+	}
+}
+
+func TestReconcile_PrunesDeselectedOriginOnly(t *testing.T) {
+	clients := newFakeClients()
+	provider := NewProvider("sub", "afd-rg", clients)
+	desired := testGateway()
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatal(err)
+	}
+	clients.markSucceeded()
+	removed := desired.Routes[0].Backends[0].Origins[1].Name
+	desired.Routes[0].Backends[0].Origins = desired.Routes[0].Backends[0].Origins[:1]
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := clients.resources[resourceKey(ResourceOrigin, removed)]; ok {
+		t.Fatalf("deselected origin %q still exists", removed)
+	}
+	group := desired.Routes[0].Backends[0].OriginGroupName
+	if _, ok := clients.resources[resourceKey(ResourceOriginGroup, group)]; !ok {
+		t.Fatalf("desired origin group %q was deleted", group)
+	}
+}
+
+func TestReconcile_RemovingOneSharedRouteKeepsBackendGraph(t *testing.T) {
+	clients := newFakeClients()
+	provider := NewProvider("sub", "afd-rg", clients)
+	desired := testGateway()
+	second := desired.Routes[0]
+	second.Name = "echo-two"
+	desired.Routes = append(desired.Routes, second)
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatal(err)
+	}
+	clients.markSucceeded()
+	graph, err := BuildResourceGraph("sub", "afd-rg", desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removedRoute := graph.Routes[1].Name
+
+	desired.Routes = desired.Routes[:1]
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := clients.resources[resourceKey(ResourceRoute, removedRoute)]; ok {
+		t.Fatalf("removed route %q still exists", removedRoute)
+	}
+	if _, ok := clients.resources[resourceKey(ResourceOriginGroup, graph.OriginGroups[0].Name)]; !ok {
+		t.Fatal("shared origin group was deleted")
+	}
+	for _, origin := range graph.Origins {
+		if _, ok := clients.resources[resourceKey(ResourceOrigin, origin.Name)]; !ok {
+			t.Errorf("shared origin %q was deleted", origin.Name)
+		}
+	}
+}
+
+func TestReconcile_EmptyRoutesPrunesRouteAndBackendGraph(t *testing.T) {
+	clients := newFakeClients()
+	provider := NewProvider("sub", "afd-rg", clients)
+	desired := testGateway()
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatal(err)
+	}
+	graph, err := BuildResourceGraph("sub", "afd-rg", desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients.markSucceeded()
+	desired.Routes = nil
+	if _, err := provider.Reconcile(context.Background(), desired); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := clients.resources[resourceKey(ResourceRoute, graph.Routes[0].Name)]; ok {
+		t.Fatal("stale route still exists")
+	}
+	if _, ok := clients.resources[resourceKey(ResourceOriginGroup, graph.OriginGroups[0].Name)]; ok {
+		t.Fatal("stale origin group still exists")
+	}
+	for _, origin := range graph.Origins {
+		if _, ok := clients.resources[resourceKey(ResourceOrigin, origin.Name)]; ok {
+			t.Errorf("stale origin %q still exists", origin.Name)
+		}
+	}
+	if _, ok := clients.resources[resourceKey(ResourceProfile, graph.Profile.Name)]; !ok {
+		t.Fatal("Gateway-owned profile was deleted")
+	}
+}
+
+func TestBuildResourceGraph_DeduplicatesSharedBackend(t *testing.T) {
+	desired := testGateway()
+	second := desired.Routes[0]
+	second.Name = "echo-two"
+	desired.Routes = append(desired.Routes, second)
+	graph, err := BuildResourceGraph("sub", "afd-rg", desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Routes) != 2 || len(graph.OriginGroups) != 1 || len(graph.Origins) != 2 {
+		t.Fatalf("graph has routes=%d groups=%d origins=%d, want 2/1/2",
+			len(graph.Routes), len(graph.OriginGroups), len(graph.Origins))
 	}
 }
 
@@ -289,6 +435,7 @@ func testGateway() gatewaymodel.GlobalGateway {
 
 type fakeClients struct {
 	resources  map[string]Resource
+	parents    map[string]ResourceParent
 	operations []string
 	failures   map[string]error
 }
@@ -296,6 +443,7 @@ type fakeClients struct {
 func newFakeClients() *fakeClients {
 	return &fakeClients{
 		resources: map[string]Resource{},
+		parents:   map[string]ResourceParent{},
 		failures:  map[string]error{},
 	}
 }
@@ -309,18 +457,38 @@ func (f *fakeClients) Get(_ context.Context, kind ResourceKind, _ ResourceParent
 	return resource, nil
 }
 
-func (f *fakeClients) Upsert(_ context.Context, kind ResourceKind, _ ResourceParent, resource Resource) (Resource, error) {
+func (f *fakeClients) List(_ context.Context, kind ResourceKind, parent ResourceParent) ([]Resource, error) {
+	f.operations = append(f.operations, string(kind)+":list")
+	resources := make([]Resource, 0)
+	for key, resource := range f.resources {
+		if !strings.HasPrefix(key, string(kind)+"/") {
+			continue
+		}
+		if kind == ResourceOrigin && f.parents[key].OriginGroupName != parent.OriginGroupName {
+			continue
+		}
+		resources = append(resources, resource)
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
+	return resources, nil
+}
+
+func (f *fakeClients) Upsert(_ context.Context, kind ResourceKind, parent ResourceParent, resource Resource) (Resource, error) {
 	f.operations = append(f.operations, string(kind)+":upsert")
 	if err := f.failures[string(kind)+":upsert:"+resource.Name]; err != nil {
 		return Resource{}, err
 	}
-	f.resources[resourceKey(kind, resource.Name)] = resource
+	key := resourceKey(kind, resource.Name)
+	f.resources[key] = resource
+	f.parents[key] = parent
 	return resource, nil
 }
 
 func (f *fakeClients) Delete(_ context.Context, kind ResourceKind, _ ResourceParent, name string) error {
 	f.operations = append(f.operations, string(kind)+":delete")
-	delete(f.resources, resourceKey(kind, name))
+	key := resourceKey(kind, name)
+	delete(f.resources, key)
+	delete(f.parents, key)
 	return nil
 }
 
@@ -347,4 +515,17 @@ func contains(values []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func operationBefore(values []string, first, second string) bool {
+	firstIndex, secondIndex := -1, -1
+	for i, value := range values {
+		if value == first && firstIndex == -1 {
+			firstIndex = i
+		}
+		if value == second && secondIndex == -1 {
+			secondIndex = i
+		}
+	}
+	return firstIndex >= 0 && secondIndex > firstIndex
 }

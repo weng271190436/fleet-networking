@@ -13,6 +13,8 @@ import (
 const (
 	// ServiceOriginAssignmentKind is the kind of the ServiceOriginAssignment resource.
 	ServiceOriginAssignmentKind = "ServiceOriginAssignment"
+	// ServiceOriginAssignmentConnectionCleanupFinalizer blocks deletion until the member removes its exact PLS connection.
+	ServiceOriginAssignmentConnectionCleanupFinalizer = "networking.fleet.azure.com/afd-connection-cleanup"
 )
 
 // ServiceOriginConnectivityType identifies how AFD connects to a member origin.

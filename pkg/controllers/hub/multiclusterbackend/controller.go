@@ -254,9 +254,12 @@ func (r *Reconciler) reconcileAssignment(
 		}
 		assignment = fleetnetv1alpha1.ServiceOriginAssignment{
 			ObjectMeta: metav1.ObjectMeta{
-				Namespace:  key.Namespace,
-				Name:       key.Name,
-				Finalizers: []string{OriginCleanupFinalizer},
+				Namespace: key.Namespace,
+				Name:      key.Name,
+				Finalizers: []string{
+					OriginCleanupFinalizer,
+					fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer,
+				},
 			},
 			Spec: desiredAssignmentSpec(backend, token),
 		}
@@ -272,6 +275,10 @@ func (r *Reconciler) reconcileAssignment(
 	desiredSpec := desiredAssignmentSpec(backend, assignment.Spec.Approval.RequestToken)
 	specChanged := !equality.Semantic.DeepEqual(assignment.Spec, desiredSpec)
 	finalizerChanged := addFinalizer(&assignment, OriginCleanupFinalizer)
+	finalizerChanged = addFinalizer(
+		&assignment,
+		fleetnetv1alpha1.ServiceOriginAssignmentConnectionCleanupFinalizer,
+	) || finalizerChanged
 	if !specChanged && !finalizerChanged {
 		return &assignment, nil
 	}
