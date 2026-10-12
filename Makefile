@@ -199,6 +199,10 @@ phase7-e2e-step-07-platform-join: ## Join networking agents and install the reus
 phase7-e2e-verify-platform: ## Verify the Part 1 handoff and absence of Part 2 resources.
 	bash test/e2e/afdprivatelink/scripts/verify-platform.sh
 
+.PHONY: phase7-e2e-redeploy-controller
+phase7-e2e-redeploy-controller: ## Rebuild/push/redeploy CONTROLLER=hub or CONTROLLER=member.
+	CONTROLLER=$(CONTROLLER) bash test/e2e/afdprivatelink/scripts/redeploy-controller.sh
+
 .PHONY: phase7-e2e-step-06-waf-manifests
 phase7-e2e-step-06-waf-manifests: ## Legacy combined WAF/controller/application manifest stage.
 	bash test/e2e/afdprivatelink/scripts/step-06-waf-manifests.sh

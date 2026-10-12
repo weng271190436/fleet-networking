@@ -1611,3 +1611,17 @@ cleanup finalizers.
 
 Part 2 Bash fences and all AFD Private Link scripts pass `bash -n`; `git diff --check` passes. The
 destructive reset was not executed, and the current `weiweng-01` scenario remains intact.
+
+## Local controller iteration guide
+
+The user requested a short documented loop for rebuilding either the hub Gateway or member
+networking controller locally, pushing it to the run-scoped ACR, updating the immutable digest in
+state, redeploying through controller-only Stage 06, and verifying the rollout/logs. The guide
+must not rebuild infrastructure or use mutable image tags in Kubernetes.
+
+Added `redeploy-controller.sh` and `phase7-e2e-redeploy-controller`. With `CONTROLLER=hub|member`,
+the target validates the existing run, builds only the selected local controller, pushes a unique
+iteration tag, resolves and records its digest atomically, invokes controller-only Stage 06, and
+waits for the affected rollout. Part 1 documents the one-command loop and hub log follow command.
+All AFD Private Link scripts, both Make dry-run variants, Part 1 Bash fences, preflight wiring, and
+`git diff --check` pass. No image was built or pushed during static validation.

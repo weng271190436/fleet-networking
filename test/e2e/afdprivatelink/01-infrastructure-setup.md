@@ -111,7 +111,38 @@ The verifier checks:
 - exactly seven run-recorded Azure assignments exist; and
 - application, PLS, WAF, Gateway, backend, route, assignment, and AFD resources are absent.
 
-## 5. Continue to the customer quickstart
+## 5. Rebuild and redeploy a controller while iterating
+
+Use this loop for controller-only code changes such as additional logging or bug fixes. Keep the
+existing run values from Section 1 and choose `hub` or `member`:
+
+```bash
+CONTROLLER=hub make phase7-e2e-redeploy-controller
+```
+
+The target:
+
+- builds only the selected controller from local source;
+- pushes a unique iteration tag to the run-scoped ACR;
+- resolves its immutable digest and updates only that image in run state;
+- reruns controller-only Stage 06; and
+- waits for the affected Deployment rollout.
+
+Follow hub controller logs:
+
+```bash
+kubectl --kubeconfig "$AFD_PLS_E2E_KUBECONFIG" \
+  --context "$AFD_PLS_E2E_HUB_CONTEXT" \
+  --namespace fleet-system \
+  logs deployment/hub-gateway-controller-manager \
+  --container manager \
+  --follow
+```
+
+Use `Ctrl+C` to stop following logs. For API/CRD, chart, or dependency changes, rebuild the
+additional owning images or rerun the relevant setup stage.
+
+## 6. Continue to the customer quickstart
 
 Part 2 needs only the same run ID:
 
