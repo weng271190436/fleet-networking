@@ -44,6 +44,9 @@ stage_scripts=(
     step-03-aks.sh
     step-04-identities-rbac-kubeconfig.sh
     step-05-crds-registration.sh
+    step-06-platform-controllers.sh
+    step-07-platform-join.sh
+    verify-platform.sh
     step-06-waf-manifests.sh
     step-07-deploy-join.sh
 )
@@ -57,6 +60,8 @@ done
 for target in \
     phase7-e2e-step-01-registry-images phase7-e2e-step-02-network phase7-e2e-step-03-aks \
     phase7-e2e-step-04-identities-rbac-kubeconfig phase7-e2e-step-05-crds-registration \
+    phase7-e2e-step-06-platform-controllers phase7-e2e-step-07-platform-join \
+    phase7-e2e-verify-platform \
     phase7-e2e-step-06-waf-manifests phase7-e2e-step-07-deploy-join; do
     grep -Eq "^${target}:" "${REPO_ROOT}/Makefile" || {
         echo "error: required Make target ${target} is missing" >&2

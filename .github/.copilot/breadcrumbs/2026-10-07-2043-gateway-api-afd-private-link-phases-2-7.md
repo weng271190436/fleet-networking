@@ -1390,3 +1390,88 @@ another clean Part 1 execution. The second run ID is `p7-10092311`.
 - The final gate passed with one Ready node per cluster and zero application Services, PLS
   resources, WAF policies, Gateways, MultiClusterBackends, or AFD profiles.
 - `p7-10092311` remains active and billable, ready for Part 2 using only its run ID.
+
+## Concise Part 1 workflow
+
+The user approved replacing the long Part 1 operator document with a short happy-path guide backed
+by Part 1-only Make targets. The existing literal commands and recovery guidance will move to a
+linked reference document under `test/e2e/afdprivatelink/reference/`; the four top-level product
+documents remain unchanged.
+
+### Phase 1: Add exact Part 1 automation
+
+- [x] **Task S1.1: Add controller-only Stage 06.**
+  - Render, validate, apply, and wait for only the hub/member controller charts.
+  - Success criteria: no Service, application, WAF, Gateway, backend, PLS, or AFD resource is
+    created.
+- [x] **Task S1.2: Add platform-only Stage 07.**
+  - Create/reuse the two IMCs, wait for real networking-agent heartbeats, patch aggregate joined
+    status, and install the reusable GatewayClass.
+  - Success criteria: the stage is idempotent and creates no Part 2 resource.
+- [x] **Task S1.3: Add a read-only platform verification target.**
+  - Verify nodes, controllers, immutable images, heartbeats, CRDs, GatewayClass, seven assignments,
+    and explicit Part 2 resource absence.
+  - Success criteria: one command proves the Part 1 handoff boundary.
+
+### Phase 2: Simplify the documentation
+
+- [x] **Task S2.1: Replace Part 1 with a short copy/paste guide.**
+  - Keep one run ID input, prerequisites, eight ordered Make commands, expected result, resume
+    behavior, Part 2 handoff, and cleanup link.
+  - Success criteria: the happy path is understandable without Azure implementation detail.
+- [x] **Task S2.2: Preserve the detailed operator reference.**
+  - Move the current literal commands, safety checks, and recovery guidance to a linked reference
+    document and repair its relative links.
+  - Success criteria: no diagnostic or safety content is lost, and exactly four top-level
+    runbook Markdown documents remain.
+- [x] **Task S2.3: Wire Make, preflight, and stage handoffs.**
+  - Add the three new targets, make Stage 05 point to controller-only Stage 06, and include the
+    scripts/targets in static preflight.
+  - Success criteria: the documented command sequence and implementation agree.
+
+### Phase 3: Validate the exact short workflow
+
+- [x] **Task S3.1: Run static validation.**
+  - Run `bash -n`, preflight checks, Helm/render safeguards, link checks, top-level document-count
+    checks, and `git diff --check`.
+- [ ] **Task S3.2: Run Stages 06/07 and verification against the active platform run.**
+  - Reconcile `p7-10092311` idempotently using the new targets.
+  - Success criteria: all targets pass and the verifier confirms no Part 2 resources exist.
+- [x] **Task S3.3: Record the resulting workflow and any fixes.**
+  - Success criteria: breadcrumb, changed files, validation, and active billable state are current.
+
+### Concise Part 1 implementation
+
+- Added `step-06-platform-controllers.sh`, which validates the Part 1 prerequisites, renders only
+  digest-pinned controller manifests, rejects exact Part 2 kinds, applies the three controllers,
+  and waits for availability/CRD establishment.
+- Added `step-07-platform-join.sh`, which idempotently creates the two IMCs, waits for real
+  networking-agent joins, patches aggregate MemberCluster status only when needed, installs the
+  reusable GatewayClass, and waits for `Accepted=True`.
+- Added `verify-platform.sh`, a read-only exit gate for nodes, controllers, immutable images,
+  heartbeats, MemberClusters, CRDs, GatewayClass, seven state assignments, and explicit absence of
+  application, PLS, WAF, Gateway, route, backend, assignment, and AFD resources.
+- Added the three matching Make targets and wired them into preflight. Stage 05 now points to the
+  controller-only Stage 06 target.
+- Replaced the top-level Part 1 document with a short guide using one run ID, preflight, seven
+  resumable targets, one verifier, Part 2 handoff, troubleshooting, and cleanup.
+- Moved the original literal operator runbook to
+  `test/e2e/afdprivatelink/reference/01-infrastructure-setup-details.md`, repaired its links, and
+  mapped its detailed sections to the new targets.
+- Corrected the controller-manifest kind guard to anchor complete kind values, so
+  `ServiceAccount` is not mistaken for the forbidden Part 2 `Service` kind.
+
+### Concise Part 1 validation
+
+- `bash -n` passed for every AFD Private Link script and Bash fences in both Part 1 documents.
+- Make dry-run resolution passed for all three new targets.
+- Relative links resolve, and exactly four Markdown documents remain at the runbook top level.
+- Updated read-only preflight passed for `p7-10092311`, including all new scripts and targets.
+- Populated hub/member Helm renders passed immutable-image and exact-kind boundary guards.
+- `git diff --check` passed.
+- A live Stage 06 attempt stopped before Azure mutation because `p7-10092311` had already been
+  cleaned outside this session. The newly created empty local state/artifact/diagnostic files were
+  removed, and Azure confirmed the primary RG is absent.
+- No replacement billable environment was provisioned. Live execution of the new Stage 06/07 and
+  verifier wrappers remains pending for the next explicitly approved Part 1 run; the underlying
+  literal boundary was previously validated twice.

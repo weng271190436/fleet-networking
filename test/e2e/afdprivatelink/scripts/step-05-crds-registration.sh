@@ -98,4 +98,4 @@ create_member_cluster "${AFD_PLS_E2E_MEMBER1_CLUSTER}" "${member_1_principal}"
 create_member_cluster "${AFD_PLS_E2E_MEMBER2_CLUSTER}" "${member_2_principal}"
 
 trap - EXIT INT TERM
-complete_stage step-05-crds-registration "make phase7-e2e-step-06-waf-manifests"
+complete_stage step-05-crds-registration "make phase7-e2e-step-06-platform-controllers"

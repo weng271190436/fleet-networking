@@ -187,6 +187,18 @@ phase7-e2e-step-04-identities-rbac-kubeconfig: ## Reconcile identities, RBAC, fe
 phase7-e2e-step-05-crds-registration: ## Apply CRDs, registration resources, and MemberClusters.
 	bash test/e2e/afdprivatelink/scripts/step-05-crds-registration.sh
 
+.PHONY: phase7-e2e-step-06-platform-controllers
+phase7-e2e-step-06-platform-controllers: ## Render and deploy only the Part 1 controllers.
+	bash test/e2e/afdprivatelink/scripts/step-06-platform-controllers.sh
+
+.PHONY: phase7-e2e-step-07-platform-join
+phase7-e2e-step-07-platform-join: ## Join networking agents and install the reusable GatewayClass.
+	bash test/e2e/afdprivatelink/scripts/step-07-platform-join.sh
+
+.PHONY: phase7-e2e-verify-platform
+phase7-e2e-verify-platform: ## Verify the Part 1 handoff and absence of Part 2 resources.
+	bash test/e2e/afdprivatelink/scripts/verify-platform.sh
+
 .PHONY: phase7-e2e-step-06-waf-manifests
 phase7-e2e-step-06-waf-manifests: ## Legacy combined WAF/controller/application manifest stage.
 	bash test/e2e/afdprivatelink/scripts/step-06-waf-manifests.sh
