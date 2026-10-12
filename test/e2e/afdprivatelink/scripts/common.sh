@@ -48,9 +48,9 @@ initialize_names() {
     export AFD_PLS_E2E_HUB_CONTEXT="phase7-${AFD_PLS_E2E_RUN_ID}-hub"
     export AFD_PLS_E2E_MEMBER1_CONTEXT="phase7-${AFD_PLS_E2E_RUN_ID}-member-1"
     export AFD_PLS_E2E_MEMBER2_CONTEXT="phase7-${AFD_PLS_E2E_RUN_ID}-member-2"
-    export AFD_PLS_E2E_HUB_MANIFEST="${AFD_PLS_E2E_HUB_MANIFEST:-${AFD_PLS_E2E_ARTIFACT_DIR}/hub.yaml}"
-    export AFD_PLS_E2E_MEMBER1_MANIFEST="${AFD_PLS_E2E_MEMBER1_MANIFEST:-${AFD_PLS_E2E_ARTIFACT_DIR}/member-1.yaml}"
-    export AFD_PLS_E2E_MEMBER2_MANIFEST="${AFD_PLS_E2E_MEMBER2_MANIFEST:-${AFD_PLS_E2E_ARTIFACT_DIR}/member-2.yaml}"
+    export AFD_PLS_E2E_HUB_MANIFEST="${AFD_PLS_E2E_ARTIFACT_DIR}/hub.yaml"
+    export AFD_PLS_E2E_MEMBER1_MANIFEST="${AFD_PLS_E2E_ARTIFACT_DIR}/member-1.yaml"
+    export AFD_PLS_E2E_MEMBER2_MANIFEST="${AFD_PLS_E2E_ARTIFACT_DIR}/member-2.yaml"
     export AFD_PLS_E2E_GATEWAY_MANIFEST="${AFD_PLS_E2E_ARTIFACT_DIR}/gateway-resources.yaml"
     export AFD_PLS_E2E_HUB_CONTROLLER_DEPLOYMENT="deployment/hub-gateway-controller-manager"
 

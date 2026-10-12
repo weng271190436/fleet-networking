@@ -1522,3 +1522,29 @@ The user requested that Stage 03 create the hub and two member AKS clusters conc
 - `git diff --check` passed.
 - Live parallel AKS provisioning remains to be witnessed during the next explicitly approved clean
   Part 1 run; no billable resources were created for this change.
+
+## Step 06 stale manifest-path fix
+
+Run `weiweng-01` reached the controller-only stage, but `initialize_names` preserved exported
+manifest paths from old run `p7-10082105`. Helm therefore tried to write the new hub manifest into
+a removed old artifact directory and failed before controller deployment.
+
+The approved correction is to recompute all generated manifest paths from the active run ID on
+every `initialize_names` call. Generated paths are internal run state and must not accept stale
+cross-run overrides. Step 06 and the legacy combined deploy check will also use EndpointSlice
+instead of deprecated core/v1 Endpoints to verify the Azure Workload Identity webhook.
+
+### Step 06 fix validation
+
+- A stale-path simulation set all three manifest variables to old directories; `initialize_names`
+  recomputed them exactly under `.phase7-weiweng-01/`.
+- The live hub EndpointSlice reported two ready Azure Workload Identity webhook endpoints without
+  the core/v1 Endpoints deprecation warning.
+- `bash -n` passed for `common.sh`, the controller-only Step 06, and the legacy combined deploy
+  script; `git diff --check` passed.
+- Rerunning only `phase7-e2e-step-06-platform-controllers` for `weiweng-01` succeeded. The hub and
+  both member controller Deployments reached Available, and both networking CRDs became
+  Established.
+- Azure Policy emitted an advisory warning that the pinned external refresh-token image was not
+  on its custom allowlist. The policy did not deny the Deployment, and both member controllers
+  became Available.

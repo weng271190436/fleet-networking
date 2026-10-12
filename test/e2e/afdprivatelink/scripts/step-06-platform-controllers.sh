@@ -43,9 +43,10 @@ for context in "${AFD_PLS_E2E_HUB_CONTEXT}" "${AFD_PLS_E2E_MEMBER1_CONTEXT}" \
         exit 1
     }
 done
-webhook_endpoints="$(k "${AFD_PLS_E2E_HUB_CONTEXT}" -n kube-system get endpoints \
-    azure-wi-webhook-webhook-service -o json |
-    jq '[.subsets[]?.addresses[]?] | length')"
+webhook_endpoints="$(k "${AFD_PLS_E2E_HUB_CONTEXT}" -n kube-system get \
+    endpointslices.discovery.k8s.io \
+    -l kubernetes.io/service-name=azure-wi-webhook-webhook-service -o json |
+    jq '[.items[]?.endpoints[]? | select(.conditions.ready != false)] | length')"
 [[ "${webhook_endpoints}" -ge 1 ]] || {
     echo "error: hub Azure Workload Identity webhook has no endpoint" >&2
     exit 1
