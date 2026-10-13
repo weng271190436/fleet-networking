@@ -443,6 +443,17 @@ kubectl --context "$HUB_CONTEXT" \
   --timeout=20m
 ```
 
+Delete the now-unresolved HTTPRoute:
+
+```bash
+kubectl --context "$HUB_CONTEXT" \
+  --namespace afd-pls-e2e \
+  delete httproute/echo \
+  --ignore-not-found \
+  --wait=true \
+  --timeout=5m
+```
+
 Delete the Gateway and wait for its controller-owned AFD profile graph:
 
 ```bash
@@ -454,8 +465,8 @@ kubectl --context "$HUB_CONTEXT" \
   --timeout=30m
 ```
 
-Finally, delete the application namespaces. This removes the HTTPRoute and both member
-Deployments, Services, internal load balancers, and PLS resources:
+Finally, delete the application namespaces. This removes both member Deployments, Services,
+internal load balancers, PLS resources, and any remaining namespaced objects:
 
 ```bash
 for context in "$MEMBER_1_CONTEXT" "$MEMBER_2_CONTEXT" "$HUB_CONTEXT"; do
