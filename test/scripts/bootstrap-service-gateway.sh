@@ -11,10 +11,6 @@ if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" != true ]]; then
   echo "error: dedicated Service Gateway setup requires ENABLE_SERVICE_GATEWAY_PROOF=true" >&2
   exit 1
 fi
-if [[ "${SERVICE_GATEWAY_CUTOVER_APPROVED:-false}" != true ]]; then
-  echo "error: set SERVICE_GATEWAY_CUTOVER_APPROVED=true only after approving billable setup, public authenticated AKS APIs, and existing-node subnet egress cutover" >&2
-  exit 1
-fi
 for tool in az kubectl kubelogin helm jq curl python3 ssh-keygen docker go timeout; do
   command -v "$tool" >/dev/null || { echo "error: missing $tool" >&2; exit 1; }
 done

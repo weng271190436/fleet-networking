@@ -106,15 +106,14 @@ export AZURE_SUBSCRIPTION_ID=d712bfad-d238-486f-8f1b-bf61a831b712
 export AZURE_RESOURCE_GROUP="fleet-sg-e2e-$(date -u +%Y%m%d%H%M%S)"
 export ENABLE_SERVICE_GATEWAY_PROOF=true
 export SERVICE_GATEWAY_USER_OBJECT_ID=3274cd1b-a8b9-480f-adcd-fa8285a786fc
-export SERVICE_GATEWAY_CUTOVER_APPROVED=true
 
 make e2e-setup
 make e2e-tests
 ```
 
-`SERVICE_GATEWAY_CUTOVER_APPROVED=true` is explicit approval for billable
-provisioning, public Entra-authenticated AKS APIs, and experimental subnet-wide
-egress cutover. Use it only after confirming the preview topology with the
+Selecting this scenario creates billable resources, public Entra-authenticated
+AKS APIs, and performs experimental subnet-wide egress cutover.
+Run it only after confirming the preview topology with the
 network owners. Defaults are `LOCATION=eastus2euap` and
 `KUBERNETES_VERSION=1.36.3`; set them before setup if the preview owners
 approve different values.
@@ -292,14 +291,20 @@ may select a dedicated test identity/subscription). Configure environment vars:
 
 | Variable | Required value |
 | --- | --- |
-| `SERVICE_GATEWAY_E2E_CUTOVER_APPROVED` | `true` only after approval of the preview topology and egress cutover |
 | `SERVICE_GATEWAY_E2E_LOCATION` | Approved region; defaults to `eastus2euap` |
 | `SERVICE_GATEWAY_E2E_KUBERNETES_VERSION` | Approved Kubernetes version; defaults to `1.36.3` |
 
-Without explicit cutover approval, the new row fails before provisioning.
-Other rows do not require these variables or this environment's approval.
+The protected environment provides the CI approval boundary; no additional
+cutover environment flag is required. Other rows do not require these variables
+or this environment's approval.
 
-CI uses `SERVICE_GATEWAY_PRINCIPAL_TYPE=ServicePrincipal`. The bootstrap reads
+CI uses `SERVICE_GATEWAY_PRINCIPAL_TYPE=ServicePrincipal`.
+The SG-only preparation step supplies identity mode, region
+and Kubernetes version to subsequent steps only for that scenario. Existing
+subscription, topology and Traffic Manager settings remain step-scoped; the
+other matrix scenarios do not receive SG-specific defaults.
+
+The bootstrap reads
 its Object ID locally from the Azure CLI ARM token's `oid` claim, without
 printing/storing the token or calling Graph. An explicit
 `SERVICE_GATEWAY_PRINCIPAL_OBJECT_ID` can instead supply that ID. Interactive

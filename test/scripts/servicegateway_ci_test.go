@@ -57,18 +57,36 @@ func TestServiceGatewayCIMatrixContract(t *testing.T) {
 		t.Fatalf("expected one SG matrix row, got %d", count)
 	}
 	if job.Env["ENABLE_SERVICE_GATEWAY_PROOF"] != "${{ matrix.enable-service-gateway }}" ||
-		!strings.Contains(job.Env["SERVICE_GATEWAY_PRINCIPAL_TYPE"], "ServicePrincipal") ||
-		!strings.Contains(job.Env["SERVICE_GATEWAY_CUTOVER_APPROVED"], "vars.SERVICE_GATEWAY_E2E_CUTOVER_APPROVED") ||
 		!strings.Contains(job.Environment, "service-gateway-e2e") {
 		t.Fatal("CI lacks explicit identity/preview/cutover gate")
 	}
+	for _, name := range []string{"SERVICE_GATEWAY_PRINCIPAL_TYPE",
+		"LOCATION", "KUBERNETES_VERSION", "AZURE_SUBSCRIPTION_ID", "AZURE_NETWORK_SETTING", "ENABLE_TRAFFIC_MANAGER"} {
+		if _, exists := job.Env[name]; exists {
+			t.Fatalf("%s should not affect unrelated matrix rows at job scope", name)
+		}
+	}
 	setup, proof, report, cleanup := -1, -1, -1, -1
+	prepared := false
 	for i, step := range job.Steps {
 		switch step.Name {
+		case "Prepare Service Gateway CI tools and authorization":
+			prepared = step.If == "matrix.enable-service-gateway" &&
+				strings.Contains(step.Run, "SERVICE_GATEWAY_PRINCIPAL_TYPE=ServicePrincipal") &&
+				strings.Contains(step.Run, `>> "$GITHUB_ENV"`)
+			for _, name := range []string{"LOCATION", "KUBERNETES_VERSION"} {
+				if step.Env[name] == "" || !strings.Contains(step.Run, "echo \""+name+"=$"+name+"\"") {
+					t.Fatalf("SG-only preparation does not propagate %s", name)
+				}
+			}
 		case "Setup e2e Environment":
 			setup = i
 			if step.ID != "setup" || !strings.Contains(step.Run, "make e2e-setup") {
 				t.Fatal("setup not reused")
+			}
+			if step.Env["AZURE_SUBSCRIPTION_ID"] == "" || step.Env["AZURE_NETWORK_SETTING"] != "${{ matrix.network-setting }}" ||
+				step.Env["ENABLE_TRAFFIC_MANAGER"] != "${{ matrix.enable-traffic-manager }}" {
+				t.Fatal("existing setup variables must remain step-scoped")
 			}
 		case "Run e2e tests":
 			proof = i
@@ -79,6 +97,13 @@ func TestServiceGatewayCIMatrixContract(t *testing.T) {
 			report = i
 			if !strings.Contains(step.If, "always()") || !strings.Contains(step.Run, "report.json") {
 				t.Fatal("failure report not retained")
+			}
+			if step.Env["AZURE_SUBSCRIPTION_ID"] == "" {
+				t.Fatal("report lacks step-scoped subscription")
+			}
+		case "Collect agent logs":
+			if step.Env["AZURE_SUBSCRIPTION_ID"] == "" {
+				t.Fatal("log collection lacks step-scoped subscription")
 			}
 		case "Upload agent logs":
 			if !strings.Contains(step.With["name"], "matrix.enable-service-gateway") {
@@ -92,9 +117,12 @@ func TestServiceGatewayCIMatrixContract(t *testing.T) {
 				!strings.Contains(step.Env["SERVICE_GATEWAY_CLEANUP_APPROVED"], "matrix.enable-service-gateway") {
 				t.Fatal("CI can clean up a failed SG environment")
 			}
+			if step.Env["AZURE_SUBSCRIPTION_ID"] == "" {
+				t.Fatal("cleanup lacks step-scoped subscription")
+			}
 		}
 	}
-	if setup < 0 || proof <= setup || report <= proof || cleanup <= report {
+	if !prepared || setup < 0 || proof <= setup || report <= proof || cleanup <= report {
 		t.Fatal("setup/proof/report/cleanup ordering is unsafe")
 	}
 }

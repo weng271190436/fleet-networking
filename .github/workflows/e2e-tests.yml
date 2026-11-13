@@ -64,16 +64,8 @@ jobs:
       ENABLE_AFD_PRIVATE_LINK_AUTO_APPROVAL: ${{ matrix.enable-afd }}
       RETAIN_AFD_E2E_SETUP: "false"
       ENABLE_SERVICE_GATEWAY_PROOF: ${{ matrix.enable-service-gateway }}
-      SERVICE_GATEWAY_PRINCIPAL_TYPE: ${{ matrix.enable-service-gateway && 'ServicePrincipal' || 'User' }}
-      SERVICE_GATEWAY_CUTOVER_APPROVED: ${{ matrix.enable-service-gateway && vars.SERVICE_GATEWAY_E2E_CUTOVER_APPROVED || 'false' }}
-      LOCATION: ${{ matrix.enable-service-gateway && (vars.SERVICE_GATEWAY_E2E_LOCATION || 'eastus2euap') || 'eastus2' }}
-      KUBERNETES_VERSION: ${{ vars.SERVICE_GATEWAY_E2E_KUBERNETES_VERSION || '1.36.3' }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.E2E_AZURE_SUBSCRIPTION_ID }}
-      AZURE_NETWORK_SETTING: ${{ matrix.network-setting }}
-      ENABLE_TRAFFIC_MANAGER: ${{ matrix.enable-traffic-manager }}
     runs-on: ubuntu-latest
     environment: ${{ matrix.enable-service-gateway && 'service-gateway-e2e' || '' }}
-    timeout-minutes: 360
     needs: [
       detect-noop,
     ]
@@ -89,11 +81,7 @@ jobs:
 
       - name: Prepare e2e variables
         run: |
-          if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" == true ]]; then
-            echo "AZURE_RESOURCE_GROUP=fleet-sg-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
-          else
-            echo "AZURE_RESOURCE_GROUP=fleet-networking-e2e-$RANDOM" >> "$GITHUB_ENV"
-          fi
+          echo "AZURE_RESOURCE_GROUP=fleet-networking-e2e-$RANDOM" >> "$GITHUB_ENV"
 
       # Reference: https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-azure
       - name: 'OIDC Login to Azure Public Cloud'
@@ -128,15 +116,19 @@ jobs:
       - name: Prepare Service Gateway CI tools and authorization
         if: matrix.enable-service-gateway
         run: |
-          if [[ "$SERVICE_GATEWAY_CUTOVER_APPROVED" != true ]]; then
-            echo "::error::Approve preview region/capacity and subnet egress cutover, then set SERVICE_GATEWAY_E2E_CUTOVER_APPROVED=true in the protected service-gateway-e2e environment."
-            exit 1
-          fi
           if ! kubelogin --version; then
             az aks install-cli
           fi
           kubelogin --version
           python3 --version
+          {
+            echo "SERVICE_GATEWAY_PRINCIPAL_TYPE=ServicePrincipal"
+            echo "LOCATION=$LOCATION"
+            echo "KUBERNETES_VERSION=$KUBERNETES_VERSION"
+          } >> "$GITHUB_ENV"
+        env:
+          LOCATION: ${{ vars.SERVICE_GATEWAY_E2E_LOCATION || 'eastus2euap' }}
+          KUBERNETES_VERSION: ${{ vars.SERVICE_GATEWAY_E2E_KUBERNETES_VERSION || '1.36.3' }}
   
       - name: Setup e2e Environment
         id: setup
@@ -163,6 +155,7 @@ jobs:
         run: |
           make e2e-collect-logs
         env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.E2E_AZURE_SUBSCRIPTION_ID }}
           LOG_DIR: agent-logs-${{ matrix.network-setting }}-enable-atm-${{ matrix.enable-traffic-manager }}-enable-afd-${{ matrix.enable-afd }}-enable-sg-${{ matrix.enable-service-gateway }}
       - name: Collect Service Gateway report
         if: always() && matrix.enable-service-gateway
@@ -182,6 +175,7 @@ jobs:
             echo "::warning::Service Gateway environment retained for inspected recovery: $AZURE_RESOURCE_GROUP"
           fi
         env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.E2E_AZURE_SUBSCRIPTION_ID }}
           LOG_DIR: agent-logs-${{ matrix.network-setting }}-enable-atm-${{ matrix.enable-traffic-manager }}-enable-afd-${{ matrix.enable-afd }}-enable-sg-${{ matrix.enable-service-gateway }}
       - name: Upload agent logs
         if: always()
@@ -196,6 +190,7 @@ jobs:
         run: |
           make e2e-cleanup
         env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.E2E_AZURE_SUBSCRIPTION_ID }}
           AZURE_CLIENT_ID: ${{ secrets.E2E_AZURE_CLIENT_ID}}
           AZURE_CLIENT_SECRET: ${{ secrets.E2E_AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

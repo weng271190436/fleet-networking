@@ -28,7 +28,6 @@ func serviceGatewayScriptEnvironment(t *testing.T) {
 	t.Setenv("AZURE_NETWORK_SETTING", "shared-vnet")
 	t.Setenv("AZURE_SUBSCRIPTION_ID", "11111111-1111-1111-1111-111111111111")
 	t.Setenv("AZURE_RESOURCE_GROUP", "sg-proof-test")
-	t.Setenv("SERVICE_GATEWAY_CUTOVER_APPROVED", "true")
 	t.Setenv("SERVICE_GATEWAY_USER_OBJECT_ID", "22222222-2222-2222-2222-222222222222")
 	t.Setenv("SERVICE_GATEWAY_RESUME_INSTALL", "false")
 	t.Setenv("SERVICE_GATEWAY_PRINCIPAL_TYPE", "User")
@@ -65,20 +64,20 @@ printf '%s|%s\n' "$KUBECONFIG" "$SERVICE_GATEWAY_PROOF_CONFIG"`)
 	}
 }
 
-func TestServiceGatewaySetupRequiresApprovalBeforeAzure(t *testing.T) {
+func TestServiceGatewaySetupRequiresScenarioBeforeAzure(t *testing.T) {
 	serviceGatewayScriptEnvironment(t)
-	t.Setenv("SERVICE_GATEWAY_CUTOVER_APPROVED", "false")
+	t.Setenv("ENABLE_SERVICE_GATEWAY_PROOF", "false")
 	bin := t.TempDir()
 	log := filepath.Join(t.TempDir(), "azure-called")
 	t.Setenv("SG_TEST_LOG", log)
 	writeAFDCommand(t, filepath.Join(bin, "az"), "#!/bin/bash\necho called > \"$SG_TEST_LOG\"\nexit 91\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	output, err := runAFDScript(t, "./bootstrap.sh")
-	if err == nil || !strings.Contains(output, "SERVICE_GATEWAY_CUTOVER_APPROVED") {
-		t.Fatalf("missing approval was not enforced: %v\n%s", err, output)
+	output, err := runAFDScript(t, "./bootstrap-service-gateway.sh")
+	if err == nil || !strings.Contains(output, "ENABLE_SERVICE_GATEWAY_PROOF=true") {
+		t.Fatalf("missing scenario opt-in was not enforced: %v\n%s", err, output)
 	}
 	if _, err := os.Stat(log); !os.IsNotExist(err) {
-		t.Fatal("setup contacted Azure without approval")
+		t.Fatal("setup contacted Azure without the scenario opt-in")
 	}
 }
 
