@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"go.goms.io/fleet/pkg/utils/cloudconfig/azure"
@@ -42,9 +43,10 @@ var (
 	enableLeaderElection    = flag.Bool("leader-elect", true, "Enable leader election for the controller manager.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "fleet-system", "The namespace used for leader election.")
 
-	enableAFD        = flag.Bool("enable-afd", false, "Enable Gateway API reconciliation and AFD Premium private HTTP provisioning, observation and owned cleanup; enabling performs Azure writes.")
-	cloudConfigFile  = flag.String("cloud-config", "/etc/kubernetes/provider/azure.json", "The Azure cloud configuration file.")
-	afdResourceGroup = flag.String("afd-resource-group", "", "The resource group in which the controller manages Azure Front Door resources.")
+	enableAFD            = flag.Bool("enable-afd", false, "Enable Gateway API reconciliation and AFD Premium private HTTP provisioning, observation and owned cleanup; enabling performs Azure writes.")
+	enableServiceGateway = flag.Bool("enable-service-gateway", false, "Enable experimental TCP Service Gateway provisioning and subnet egress cutover; enabling performs Azure writes.")
+	cloudConfigFile      = flag.String("cloud-config", "/etc/kubernetes/provider/azure.json", "The Azure cloud configuration file.")
+	afdResourceGroup     = flag.String("afd-resource-group", "", "The resource group in which the controller manages Azure Front Door resources.")
 )
 
 func init() {
@@ -72,6 +74,7 @@ func currentOptions() managerOptions {
 		leaderElection:          *enableLeaderElection,
 		leaderElectionNamespace: *leaderElectionNamespace,
 		enableAFD:               *enableAFD,
+		enableServiceGateway:    *enableServiceGateway,
 		cloudConfigFile:         *cloudConfigFile,
 		afdResourceGroup:        *afdResourceGroup,
 	}
@@ -83,6 +86,7 @@ type managerOptions struct {
 	leaderElection          bool
 	leaderElectionNamespace string
 	enableAFD               bool
+	enableServiceGateway    bool
 	cloudConfigFile         string
 	afdResourceGroup        string
 }
@@ -112,6 +116,9 @@ func productionDependencies() dependencies {
 }
 
 func run(options managerOptions, deps dependencies) error {
+	if options.enableServiceGateway && !options.leaderElection {
+		return fmt.Errorf("Service Gateway requires leader election for exclusive network ownership")
+	}
 	scheme, err := deps.newScheme()
 	if err != nil {
 		return fmt.Errorf("register controller schemes: %w", err)
@@ -154,6 +161,11 @@ func run(options managerOptions, deps dependencies) error {
 			return fmt.Errorf("register Gateway controllers: %w", err)
 		}
 		klog.InfoS("Gateway private HTTP reconciliation, origin observation and owned AFD cleanup registered; Private Link approval is asynchronous")
+	}
+	if options.enableServiceGateway {
+		if err := setupServiceGateway(mgr, options.cloudConfigFile); err != nil {
+			return fmt.Errorf("register Service Gateway controller: %w", err)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -205,6 +217,7 @@ func newScheme() (*runtime.Scheme, error) {
 		gatewayv1.Install,
 		// ReferenceGrant remains v1beta1 in Gateway API v1.2.1.
 		gatewayv1beta1.Install,
+		gatewayv1alpha2.Install,
 		fleetnetv1alpha1.AddToScheme,
 	}
 	for _, install := range installers {

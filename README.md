@@ -20,6 +20,12 @@ The fleet networking consists of the following components:
 
 The Controller Manager runs the various controllers built up on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) by watching fleet networking resources.
 
+An optional, disabled-by-default
+[Service Gateway TCP controller](docs/design/service-gateway-standard-aks.md)
+uses Gateway API and exported member pod/node locations to manage a regional
+Service LB/VIP, Service Gateway, and NAT. Subnet enrollment explicitly changes
+egress; this experimental path is not a production AKS migration feature.
+
 ## Constraints
 
 - Assuming member clusters are Kubernetes clusters on the same virtual networking, 

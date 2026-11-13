@@ -4,6 +4,11 @@ metadata:
   creationTimestamp: null
   name: {{ include "member-net-controller-manager.fullname" . }}-role
 rules:
+{{- if .Values.enableServiceGatewayExport }}
+- apiGroups: [""]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list", "watch"]
+{{- end }}
 - apiGroups:
   - coordination.k8s.io
   resources:

@@ -78,3 +78,4 @@ azureCloudConfig:
   userAgent: ""
   resourceGroup: ""
   location: ""
+enableServiceGatewayExport: false

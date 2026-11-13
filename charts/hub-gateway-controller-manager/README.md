@@ -345,3 +345,15 @@ consistency and exact RBAC. Ordinary Go tests do not require Helm. Render checks
 are not live API-server authorization, informer, image-execution or private HTTP
 proof. See the [configuration guide](../../docs/howtos/gateway-api-afd-configuration.md)
 for the intended product contract and current runtime limitations.
+## Experimental Service Gateway
+
+`serviceGateway.enabled: true` enables the separately owned regional TCP path.
+Install experimental Gateway API TCPRoute CRDs, enable member
+`enableServiceGatewayExport`, and configure a Gateway using the
+[Service Gateway design](../../docs/design/service-gateway-standard-aks.md).
+The existing `afd.cloudConfigSecret.name/key` supplies Azure configuration for
+either runtime; `afd.resourceGroup` remains AFD-only.
+
+Enabling this feature authorizes Azure writes and explicit subnet-wide egress
+cutover for configured Gateways. It is disabled by default and is not a
+production migration or Gateway API conformance claim.

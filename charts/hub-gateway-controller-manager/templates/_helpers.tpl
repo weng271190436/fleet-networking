@@ -40,10 +40,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "hub-gateway-controller-manager.validate" -}}
+{{- if and .Values.serviceGateway.enabled (not .Values.leaderElection) -}}
+{{- fail "Service Gateway requires leaderElection=true" -}}
+{{- end -}}
 {{- $_ := required "image.repository must select an explicitly built/published image" (.Values.image.repository | trim) -}}
 {{- $_ := required "image.tag must select an explicitly built/published image" (.Values.image.tag | trim) -}}
 {{- if .Values.afd.enabled -}}
 {{- $_ := required "afd.resourceGroup is required when AFD is enabled" (.Values.afd.resourceGroup | trim) -}}
+{{- end -}}
+{{- if or .Values.afd.enabled .Values.serviceGateway.enabled -}}
 {{- $_ := required "afd.cloudConfigSecret.name is required when AFD is enabled" (.Values.afd.cloudConfigSecret.name | trim) -}}
 {{- $_ := required "afd.cloudConfigSecret.key is required when AFD is enabled" (.Values.afd.cloudConfigSecret.key | trim) -}}
 {{- end -}}

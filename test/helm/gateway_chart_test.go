@@ -371,6 +371,22 @@ type renderedChart struct {
 	class          *gatewayv1.GatewayClass
 }
 
+func TestGatewayChartServiceGatewayOnly(t *testing.T) {
+	rendered := renderChart(t, helmSetFlag, "serviceGateway.enabled=true",
+		helmSetStringFlag, "afd.cloudConfigSecret.name=azure-config")
+	if rendered.clusterRole == nil || rendered.clusterBinding == nil {
+		t.Fatal("Service Gateway runtime lacks backend/Gateway RBAC")
+	}
+	container := rendered.deployment.Spec.Template.Spec.Containers[0]
+	found := false
+	for _, arg := range container.Args {
+		found = found || arg == "--enable-service-gateway=true"
+	}
+	if !found || len(container.VolumeMounts) == 0 {
+		t.Fatal("Service Gateway flag or cloud config mount missing")
+	}
+}
+
 func renderChart(t *testing.T, flags ...string) renderedChart {
 	t.Helper()
 	output, err := runHelm(t, append(templateArgs(), flags...)...)

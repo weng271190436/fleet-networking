@@ -16,6 +16,9 @@ afd:
     name: ""
     key: azure.json
 
+serviceGateway:
+  enabled: false
+
 gatewayClass:
   create: true
   name: azure-fleet-afd

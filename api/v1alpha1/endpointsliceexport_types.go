@@ -22,6 +22,24 @@ type Endpoint struct {
 	Addresses []string `json:"addresses"`
 }
 
+// ServiceGatewayEndpoint carries a ready IPv4 pod backend and its Azure node location.
+type ServiceGatewayEndpoint struct {
+	// Addresses are the pod IPs at this location.
+	// +kubebuilder:validation:MinItems=1
+	Addresses []string `json:"addresses"`
+	// NodeIP is the hosting node's IPv4 InternalIP.
+	NodeIP string `json:"nodeIP"`
+}
+
+// ServiceGatewayEndpointSlice is optional, opt-in metadata for the L4 gateway.
+type ServiceGatewayEndpointSlice struct {
+	// ServiceUID binds these locations to the current member Service object.
+	ServiceUID string `json:"serviceUID"`
+	// Endpoints excludes terminating and unready endpoints.
+	// +listType=atomic
+	Endpoints []ServiceGatewayEndpoint `json:"endpoints"`
+}
+
 // OwnerServiceReference points to the Service that owns the exported EndpointSlice.
 type OwnerServiceReference struct {
 	// The namespace of the owner Service.
@@ -58,6 +76,9 @@ type EndpointSliceExportSpec struct {
 	// The reference to the owner Service.
 	// +kubebuilder:validation:Required
 	OwnerServiceReference OwnerServiceReference `json:"ownerServiceReference"`
+	// ServiceGateway is populated only when node-location export is enabled.
+	// +optional
+	ServiceGateway *ServiceGatewayEndpointSlice `json:"serviceGateway,omitempty"`
 }
 
 // +kubebuilder:object:root=true

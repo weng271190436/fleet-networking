@@ -33,6 +33,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - --enable-afd={{ .Values.afd.enabled }}
+            {{- if .Values.serviceGateway.enabled }}
+            - --enable-service-gateway=true
+            {{- end }}
             - --leader-elect={{ .Values.leaderElection }}
             - --leader-election-namespace={{ .Values.leaderElectionNamespace }}
             - --metrics-bind-address=:8082
@@ -40,6 +43,8 @@ spec:
             - --v={{ .Values.logVerbosity }}
             {{- if .Values.afd.enabled }}
             - --afd-resource-group={{ .Values.afd.resourceGroup | trim }}
+            {{- end }}
+            {{- if or .Values.afd.enabled .Values.serviceGateway.enabled }}
             - --cloud-config=/etc/kubernetes/provider/azure.json
             {{- end }}
           ports:
@@ -62,13 +67,13 @@ spec:
               drop: ["ALL"]
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.afd.enabled }}
+          {{- if or .Values.afd.enabled .Values.serviceGateway.enabled }}
           volumeMounts:
             - name: cloud-provider-config
               mountPath: /etc/kubernetes/provider
               readOnly: true
           {{- end }}
-      {{- if .Values.afd.enabled }}
+      {{- if or .Values.afd.enabled .Values.serviceGateway.enabled }}
       volumes:
         - name: cloud-provider-config
           secret:

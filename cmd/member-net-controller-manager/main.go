@@ -79,6 +79,7 @@ var (
 
 	enableTrafficManagerFeature      = flag.Bool("enable-traffic-manager-feature", true, "If set, the traffic manager feature will be enabled.")
 	enablePrivateLinkOriginDiscovery = flag.Bool("enable-private-link-origin-discovery", false, "Discover private ingress origins and publish ILB/PLS metadata independently of Traffic Manager.")
+	enableServiceGatewayExport       = flag.Bool("enable-service-gateway-export", false, "Export ready pod IPv4 and node-location metadata for Fleet Service Gateway; does not configure Azure networking.")
 
 	enableNetworkingFeatures = flag.Bool("enable-networking-features", true, "If set, the networking features will be enabled. When disabled, only heartbeat functionality is preserved.")
 
@@ -306,10 +307,11 @@ func setupControllersWithManager(ctx context.Context, hubMgr, memberMgr manager.
 
 	klog.V(1).InfoS("Create endpointslice controller")
 	if err := (&endpointslice.Reconciler{
-		MemberClusterID: mcName,
-		MemberClient:    memberClient,
-		HubClient:       hubClient,
-		HubNamespace:    mcHubNamespace,
+		MemberClusterID:            mcName,
+		MemberClient:               memberClient,
+		HubClient:                  hubClient,
+		HubNamespace:               mcHubNamespace,
+		EnableServiceGatewayExport: *enableServiceGatewayExport,
 	}).SetupWithManager(ctx, memberMgr); err != nil {
 		klog.ErrorS(err, "Unable to create endpointslice controller")
 		return err

@@ -44,6 +44,9 @@ spec:
             - --add_dir_header
             - --enable-traffic-manager-feature={{ .Values.enableTrafficManagerFeature }}
             - --enable-private-link-origin-discovery={{ .Values.enablePrivateLinkOriginDiscovery }}
+            {{- if .Values.enableServiceGatewayExport }}
+            - --enable-service-gateway-export=true
+            {{- end }}
             - --enable-networking-features={{ .Values.enableNetworkingFeatures }}
             {{- if or .Values.enableTrafficManagerFeature .Values.enablePrivateLinkOriginDiscovery }}
             - --cloud-config=/etc/kubernetes/provider/azure.json

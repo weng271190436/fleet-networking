@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,11 +54,14 @@ type Reconciler struct {
 	MemberClient    client.Client
 	HubClient       client.Client
 	// The namespace reserved for the current member cluster in the hub cluster.
-	HubNamespace string
+	HubNamespace               string
+	EnableServiceGatewayExport bool
 }
 
 //+kubebuilder:rbac:groups=networking.fleet.azure.com,resources=endpointsliceexports,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 // Reconcile exports an EndpointSlice.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -138,6 +142,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Create an EndpointSliceExport in the hub cluster if the EndpointSlice has never been exported; otherwise
 	// update the corresponding EndpointSliceExport.
 	extractedEndpoints := extractEndpointsFromEndpointSlice(&endpointSlice)
+	gatewayEndpoints, gatewayErr := r.serviceGatewayEndpoints(ctx, &endpointSlice)
+	if gatewayErr != nil {
+		klog.ErrorS(gatewayErr, "Could not export Service Gateway node locations", "endpointSlice", endpointSliceRef)
+	}
 	endpointSliceExport := fleetnetv1alpha1.EndpointSliceExport{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: r.HubNamespace,
@@ -168,6 +176,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 		endpointSliceExport.Spec.AddressType = discoveryv1.AddressTypeIPv4
 		endpointSliceExport.Spec.Endpoints = extractedEndpoints
+		endpointSliceExport.Spec.ServiceGateway = gatewayEndpoints
 		endpointSliceExport.Spec.Ports = endpointSlice.Ports
 		endpointSliceExport.Spec.OwnerServiceReference = fleetnetv1alpha1.OwnerServiceReference{
 			// The owner Service is guaranteed to reside in the same namespace as the EndpointSlice to export.
@@ -198,11 +207,28 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, gatewayErr
 }
 
 // SetupWithManager sets up the EndpointSlice controller with a controller manager.
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	if r.EnableServiceGatewayExport {
+		if err := mgr.GetFieldIndexer().IndexField(ctx, &discoveryv1.EndpointSlice{}, serviceGatewayNodeField, func(object client.Object) []string {
+			slice, ok := object.(*discoveryv1.EndpointSlice)
+			if !ok {
+				return nil
+			}
+			var names []string
+			for _, endpoint := range slice.Endpoints {
+				if endpoint.NodeName != nil {
+					names = append(names, *endpoint.NodeName)
+				}
+			}
+			return names
+		}); err != nil {
+			return err
+		}
+	}
 	// Enqueue EndpointSlices for processing when a ServiceExport changes.
 	eventHandlers := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
 		endpointSliceList := &discoveryv1.EndpointSliceList{}
@@ -229,10 +255,13 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 	})
 
 	// EndpointSlice controller watches over EndpointSlice and ServiceExport objects.
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&discoveryv1.EndpointSlice{}).
-		Watches(&fleetnetv1beta1.ServiceExport{}, eventHandlers).
-		Complete(r)
+		Watches(&fleetnetv1beta1.ServiceExport{}, eventHandlers)
+	if r.EnableServiceGatewayExport {
+		builder = builder.Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.mapNodeEndpoints))
+	}
+	return builder.Complete(r)
 }
 
 // shouldSkipOrUnexportEndpointSlice returns the op the controller should take on an EndpointSlice, specifically

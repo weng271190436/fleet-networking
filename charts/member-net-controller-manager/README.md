@@ -217,3 +217,9 @@ owned.** Gateway reconciliation and traffic programming are later implementation
 phases.
 
 ## Contributing Changes
+## Experimental Service Gateway endpoint export
+
+Set `enableServiceGatewayExport: true` to export optional ready pod IPv4/node
+location metadata to the hub. This adds read-only Pod and Node RBAC and does
+not configure Azure networking or change ordinary MCS endpoint exports.
+See [Service Gateway configuration](../../docs/design/service-gateway-standard-aks.md).

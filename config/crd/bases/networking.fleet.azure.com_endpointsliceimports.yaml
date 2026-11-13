@@ -176,8 +176,9 @@ spec:
                     port:
                       description: |-
                         port represents the port number of the endpoint.
-                        If this is not specified, ports are not restricted and must be
-                        interpreted in the context of the specific consumer.
+                        If the EndpointSlice is derived from a Kubernetes service, this must be set
+                        to the service's target port. EndpointSlices used for other purposes may have
+                        a nil port.
                       format: int32
                       type: integer
                     protocol:
@@ -190,6 +191,39 @@ spec:
                   x-kubernetes-map-type: atomic
                 type: array
                 x-kubernetes-list-type: atomic
+              serviceGateway:
+                description: ServiceGateway is populated only when node-location export
+                  is enabled.
+                properties:
+                  endpoints:
+                    description: Endpoints excludes terminating and unready endpoints.
+                    items:
+                      description: ServiceGatewayEndpoint carries a ready IPv4 pod
+                        backend and its Azure node location.
+                      properties:
+                        addresses:
+                          description: Addresses are the pod IPs at this location.
+                          items:
+                            type: string
+                          minItems: 1
+                          type: array
+                        nodeIP:
+                          description: NodeIP is the hosting node's IPv4 InternalIP.
+                          type: string
+                      required:
+                      - addresses
+                      - nodeIP
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  serviceUID:
+                    description: ServiceUID binds these locations to the current member
+                      Service object.
+                    type: string
+                required:
+                - endpoints
+                - serviceUID
+                type: object
             required:
             - addressType
             - endpointSliceReference

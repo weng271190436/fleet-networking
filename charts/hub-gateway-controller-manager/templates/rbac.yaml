@@ -29,7 +29,7 @@ subjects:
     name: {{ $account }}
     namespace: {{ .Values.fleetSystemNamespace }}
 {{- end }}
-{{- if .Values.afd.enabled }}
+{{- if or .Values.afd.enabled .Values.serviceGateway.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -40,6 +40,17 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses", "gateways", "httproutes", "referencegrants"]
     verbs: ["get", "list", "watch"]
+  {{- if .Values.serviceGateway.enabled }}
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["tcproutes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["tcproutes/status"]
+    verbs: ["patch", "update"]
+  - apiGroups: ["networking.fleet.azure.com"]
+    resources: ["endpointsliceexports"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses", "gateways"]
     verbs: ["patch"]

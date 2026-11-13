@@ -7,6 +7,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  - nodes
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - services
   verbs:
   - create
@@ -51,6 +61,51 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses
+  - gateways
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses/status
+  - gateways/status
+  - httproutes/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways/finalizers
+  - tcproutes/status
+  verbs:
+  - patch
+  - update
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  - referencegrants
+  - tcproutes
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - networking.fleet.azure.com
