@@ -4,6 +4,11 @@ set -o nounset
 set -o pipefail
 set -x
 
+if [[ "${ENABLE_SERVICE_GATEWAY_PROOF:-false}" == true ]]; then
+  echo "error: Service Gateway environments require explicit inspected cleanup; automatic resource-group deletion is disabled" >&2
+  exit 1
+fi
+
 case "${RETAIN_AFD_E2E_SETUP:-false}" in
   true)
     echo "error: AFD setup is retained; clear RETAIN_AFD_E2E_SETUP only when explicit cleanup is authorized" >&2

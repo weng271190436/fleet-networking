@@ -7,6 +7,12 @@ set -x
 # shellcheck source=test/scripts/e2e-config.sh
 source "$(dirname "${BASH_SOURCE[0]}")/e2e-config.sh"
 
+if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" == true ]]; then
+  # This dedicated path uses Entra, private ACR pulls, and retained setup.
+  set +x
+  exec bash "$(dirname "${BASH_SOURCE[0]}")/bootstrap-service-gateway.sh"
+fi
+
 # Check required variables.
 [[ -z "${AZURE_SUBSCRIPTION_ID}" ]] && echo "AZURE_SUBSCRIPTION_ID is not set" && exit 1
 

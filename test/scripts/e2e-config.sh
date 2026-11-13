@@ -4,6 +4,32 @@ export ENABLE_TRAFFIC_MANAGER="${ENABLE_TRAFFIC_MANAGER:-false}"
 export ENABLE_AZURE_FRONT_DOOR="${ENABLE_AZURE_FRONT_DOOR:-false}"
 export RETAIN_AFD_E2E_SETUP="${RETAIN_AFD_E2E_SETUP:-false}"
 export AZURE_NETWORK_SETTING="${AZURE_NETWORK_SETTING:-shared-vnet}"
+export ENABLE_SERVICE_GATEWAY_PROOF="${ENABLE_SERVICE_GATEWAY_PROOF:-false}"
+
+if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" != true && "$ENABLE_SERVICE_GATEWAY_PROOF" != false ]]; then
+  echo "error: ENABLE_SERVICE_GATEWAY_PROOF must be true or false" >&2
+  return 1
+fi
+if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" == true ]]; then
+  if [[ "$ENABLE_AZURE_FRONT_DOOR" != false || "$ENABLE_TRAFFIC_MANAGER" != false ||
+        "$RETAIN_AFD_E2E_SETUP" != false || "$AZURE_NETWORK_SETTING" != shared-vnet ]]; then
+    echo "error: Service Gateway proof requires an isolated shared-vnet scenario without AFD or Traffic Manager" >&2
+    return 1
+  fi
+  if [[ ! "${AZURE_SUBSCRIPTION_ID:-}" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ||
+        ! "${AZURE_RESOURCE_GROUP:-}" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$ ]]; then
+    echo "error: Service Gateway proof requires AZURE_SUBSCRIPTION_ID and a fresh alphanumeric/hyphen AZURE_RESOURCE_GROUP (1-63 characters)" >&2
+    return 1
+  fi
+  if [[ "${HUB_CLUSTER:-hub}" != hub || "${MEMBER_CLUSTER_1:-member-1}" != member-1 ||
+        "${MEMBER_CLUSTER_2:-member-2}" != member-2 ]]; then
+    echo "error: Service Gateway proof requires default hub/member names" >&2
+    return 1
+  fi
+  export SERVICE_GATEWAY_STATE_DIR="$HOME/.local/state/fleet-networking/service-gateway/$AZURE_SUBSCRIPTION_ID/$AZURE_RESOURCE_GROUP"
+  export KUBECONFIG="$SERVICE_GATEWAY_STATE_DIR/kubeconfig"
+  export SERVICE_GATEWAY_PROOF_CONFIG="$SERVICE_GATEWAY_STATE_DIR/network.json"
+fi
 
 if [[ "$ENABLE_AZURE_FRONT_DOOR" != true && "$ENABLE_AZURE_FRONT_DOOR" != false ]]; then
   echo "error: ENABLE_AZURE_FRONT_DOOR must be true or false" >&2

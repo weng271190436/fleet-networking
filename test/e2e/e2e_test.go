@@ -24,6 +24,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/publicipaddressclient"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	fleetv1beta1 "go.goms.io/fleet/apis/cluster/v1beta1"
@@ -66,6 +67,7 @@ var (
 
 	enabledNetworkingFeatures = os.Getenv("AZURE_NETWORK_SETTING") != "unsupported"
 	retainedAFDSetup          bool
+	retainServiceGatewaySetup bool
 )
 
 func init() {
@@ -77,6 +79,7 @@ func init() {
 	utilruntime.Must(gatewayv1.Install(scheme))
 	// ReferenceGrant remains v1beta1 in Gateway API v1.2.1.
 	utilruntime.Must(gatewayv1beta1.Install(scheme))
+	utilruntime.Must(gatewayv1alpha2.Install(scheme))
 }
 
 func TestE2E(t *testing.T) {
@@ -86,6 +89,11 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	var err error
+	if os.Getenv("ENABLE_SERVICE_GATEWAY_PROOF") == "true" {
+		suiteConfig, _ := GinkgoConfiguration()
+		Expect(suiteConfig.LabelFilter).To(Equal("service-gateway-proof"),
+			"Run the destructive network proof in isolation with -ginkgo.label-filter=service-gateway-proof")
+	}
 	retainedAFDSetup, err = afdSetupRetention(os.Getenv("RETAIN_AFD_E2E_SETUP"))
 	Expect(err).Should(Succeed())
 	if retainedAFDSetup {
@@ -151,6 +159,10 @@ func createTestNamespace(ctx context.Context) {
 }
 
 var _ = AfterSuite(func() {
+	if retainServiceGatewaySetup {
+		AddReportEntry("Service Gateway retained suite namespace", testNamespace)
+		return
+	}
 	if retainedAFDSetup {
 		AddReportEntry("AFD retained suite namespace", testNamespace)
 		return

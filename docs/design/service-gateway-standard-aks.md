@@ -177,3 +177,20 @@ NAT-before-attachment, detach-before-NAT-deletion, readiness loss, and existing
 AFD isolation. They do not prove live Azure permissions, provisioning,
 packet delivery, subnet migration support, or runtime AKS egress recovery.
 This implementation is experimental; use a dedicated approved test environment.
+
+## Opt-in live controller E2E
+
+The [Service Gateway proof](../../test/e2e/servicegateway_test.go) uses the
+installed controllers, real member ClusterIP workloads and ServiceExports,
+and Gateway/TCPRoute objects. It never calls provider provisioning methods
+directly. It verifies owned Azure resources, the exact Service LB rule and
+pod/node mappings, 100 successful requests reaching both members, readiness
+withdrawal/restoration, and last-route teardown. Final assertions require
+restored subnet links, removed owned resources, fresh node leases, and new
+ready workloads after detach.
+
+It is **not run by default**, and has not been executed against live Azure.
+See the [E2E prerequisites and isolated invocation](../../test/README.md#service-gateway-tcp-live-proof).
+Do not point it at the retained manual lab or existing unowned resources.
+Failure retains Kubernetes fixtures and enrolled networking for diagnosis;
+an administrator must recover/clean them explicitly.

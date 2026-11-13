@@ -69,6 +69,155 @@ The setup configures the additional AKS identities, Azure role assignments, and 
 flags required by `test/e2e/traffic_manager_test.go`. Tests in that file skip when
 `ENABLE_TRAFFIC_MANAGER` is not `true`.
 
+### Service Gateway TCP live proof
+
+This is a destructive, explicitly opted-in network-lifecycle test, not part of
+ordinary networking or AFD validation. Do not run until the subscription,
+resource scopes, and subnet egress cutover have been approved.
+
+For a **fresh dedicated environment**, use the existing Make targets:
+
+```bash
+export AZURE_SUBSCRIPTION_ID=d712bfad-d238-486f-8f1b-bf61a831b712
+export AZURE_RESOURCE_GROUP="fleet-sg-e2e-$(date -u +%Y%m%d%H%M%S)"
+export ENABLE_SERVICE_GATEWAY_PROOF=true
+export SERVICE_GATEWAY_USER_OBJECT_ID=3274cd1b-a8b9-480f-adcd-fa8285a786fc
+export SERVICE_GATEWAY_CUTOVER_APPROVED=true
+
+make e2e-setup
+make e2e-tests
+```
+
+`SERVICE_GATEWAY_CUTOVER_APPROVED=true` is explicit approval for billable
+provisioning, public Entra-authenticated AKS APIs, and experimental subnet-wide
+egress cutover. Use it only after confirming the preview topology with the
+network owners. Defaults are `LOCATION=eastus2euap` and
+`KUBERNETES_VERSION=1.36.3`; set them before setup if the preview owners
+approve different values.
+
+The setup creates one hub node and two nodes per member (Standard_D4s_v4),
+ordinary Standard-LB/Azure-CNI clusters, a shared member VNet with separate
+subnets, and a private-pull ACR. It builds/pushes the current three controller
+images, installs Fleet transports and experimental TCPRoute CRDs, enables the
+new controller flags, and generates the approved network configuration.
+All Azure role assignments use ARM and explicit Object IDs, not Graph discovery.
+The test runner's public IPv4 is permitted to workload TCP/8080 in subnet and
+NIC NSGs; no managed deny rule is removed. If your source IP changes, update
+the test-specific rules through the approved network process.
+
+Keep the same environment variables for both commands. The setup and test
+derive a private kubeconfig, network configuration, setup marker and JSON report
+under
+`~/.local/state/fleet-networking/service-gateway/$AZURE_SUBSCRIPTION_ID/$AZURE_RESOURCE_GROUP`.
+They do not overwrite your normal kubeconfig or touch the earlier manual lab.
+Setup refuses an existing resource group/state directory. On setup failure,
+inspect retained resources rather than blindly selecting a new group. No
+automatic resource-group cleanup is performed; `make e2e-cleanup` refuses this
+scenario until an explicit inspected cleanup procedure is performed.
+
+Local prerequisites: Azure CLI logged into the approved tenant, Go at the
+go.mod version, Docker capable of Linux/amd64 builds, Helm, kubectl, kubelogin,
+Python 3, jq, curl, ssh-keygen, and GNU timeout. Docker/Go are checked before
+creating resources. Required providers/features must already be registered.
+The caller needs deployment and role-assignment permission; regional capacity,
+quota, policy acceptance, and the complete live path remain unverified until
+the run succeeds.
+
+For an **already prepared environment**, prerequisites are:
+
+- The existing E2E hub and two Standard-AKS member kubeconfig contexts (`hub-admin`, `member-1-admin`,
+  `member-2-admin`) configured as required by the framework. Both members must be in
+  the same approved VNet, have non-overlapping Azure-routable IPv4 pod ranges,
+  healthy nodes, and original AKS outbound connectivity. Overlay is unsupported.
+- Current test images installed, Fleet membership established, networking
+  enabled, and member `enableServiceGatewayExport=true`.
+- Experimental Gateway API TCPRoute CRDs and Fleet's updated EndpointSlice CRDs
+  installed on the hub; hub Gateway manager `serviceGateway.enabled=true` with
+  leader election and correct Azure identity configuration.
+- A dedicated Azure resource group, approved preview enrollment/capacity, and
+  fresh resource IDs for the gateway, NAT, and public IP. They must **not already
+  exist**. VNet/subnets must already exist and have **no gateway association**.
+  Both test caller and controller need permission to read the test scopes;
+  the controller needs provisioning/subnet update permissions.
+- Preview-owner authorization for the actual AKS subnet enrollment ordering.
+  The self-managed guide specifies association before nodes join; this test
+  uses existing members and must not be interpreted as migration support.
+- Approved client-to-pod TCP/8080 access in both subnet and NIC NSGs. The proof
+  does not alter firewall policy. Its traffic phase retries for ten minutes
+  so the operator can add narrow rules after the new pod IPs are visible.
+- The test runner must reach both member APIs and the public Service LB VIP.
+  Entra/Azure RBAC authentication must already work; no Graph lookup is needed.
+
+Create a private JSON file matching the
+[Gateway network configuration](../docs/design/service-gateway-standard-aks.md#gateway-and-route-example),
+including `"approveSubnetEgressCutover": true`, and set the variables below.
+Use **fresh approved resource names**, not the earlier manually created gateway.
+The test creates Kubernetes fixtures and lets the installed controller create
+the gateway/NAT/LB/public IP and mutate subnet associations.
+
+Run from the repository root in isolation:
+
+```bash
+export ENABLE_SERVICE_GATEWAY_PROOF=true
+export AZURE_SUBSCRIPTION_ID=<approved-test-subscription>
+export AZURE_RESOURCE_GROUP=<dedicated-test-resource-group>
+export AZURE_NETWORK_SETTING=shared-vnet
+export ENABLE_TRAFFIC_MANAGER=false
+unset RETAIN_AFD_E2E_SETUP
+source test/scripts/e2e-config.sh
+# For a manually prepared fixture, put its kubeconfig at "$KUBECONFIG"
+# and approved JSON at "$SERVICE_GATEWAY_PROOF_CONFIG" before running.
+go test -count=1 -tags=e2e -timeout=130m ./test/e2e \
+  -args -ginkgo.v -ginkgo.label-filter=service-gateway-proof \
+  -ginkgo.timeout=125m -ginkgo.json-report=service-gateway-proof.json
+```
+
+The manually prepared example requires real approved values. Prefer the
+Make-target workflow above for fresh environments; ordinary non-opted-in
+bootstrap does not enable the Service Gateway runtime.
+
+The test checks:
+
+1. Clean initial ownership boundaries, current enabled controller Deployments,
+   Ready nodes and fresh node heartbeat leases.
+2. One ClusterIP application per member; real ServiceExport transport;
+   controller-generated Gateway VIP; owned gateway/NAT/LB/PIP and exact mappings.
+3. 100 successful requests containing both member identities.
+4. Changing member A's readiness probe (Recreate rollout), removal of its old
+   pod mapping without deleting NAT or detaching subnets, delivery through B,
+   then recovery of both members after restoring readiness.
+5. Last-route withdrawal: original subnet associations restored before NAT
+   disappears, all owned application/shared Azure resources removed, journal
+   cleared, fresh member leases, and new workloads available after detach.
+
+Only read-only Azure APIs are used by the test caller. Azure mutations come
+from the installed controller. Polling observes lifecycle ordering but cannot
+prove platform-atomic transactions or eliminate transient outages. This test
+does not validate other VNets, cross-region behavior, controller restart, or
+cluster deletion safety.
+
+**On failure:** fixtures and suite namespaces are deliberately retained,
+including any Gateway finalizer and network enrollment. The JSON report
+includes Gateway status and Azure gateway/NAT/subnet diagnostics. Do not run
+ordinary cleanup or delete its namespace until the subnet/network state has
+been inspected and recovered. This prevents a failing assertion from silently
+triggering destructive finalizer cleanup.
+
+**On success:** the test explicitly removes the last TCPRoute and verifies
+the installed controller restored subnets and deleted only its owned Azure
+resources, then removes the Gateway/Class. Ordinary suite namespace cleanup
+removes the workloads. It never deletes clusters, VNets, subnets, or NSGs.
+
+Offline assertion regressions and live-file compilation require no clusters:
+
+```bash
+go test -count=1 ./test/e2e -run '^TestServiceGateway'
+go test -count=1 -tags=e2e ./test/e2e -run '^TestServiceGateway'
+```
+
+These `-run` selectors deliberately exclude `TestE2E`, so neither command runs
+the live suite or Azure operations.
+
 ### Azure Front Door and Gateway API
 
 The separate Gateway manager has an opt-in local image build target. It requires
