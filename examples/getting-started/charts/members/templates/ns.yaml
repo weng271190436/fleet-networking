@@ -1,11 +1,13 @@
-{{- if not .Values.userNS }}
+{{- if .Values.userNS }}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.userNS }}
 {{- end -}}
 ---
+{{- if .Values.createSystemNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ required "A valid system namespace is required" .Values.systemNS }}
+{{- end }}

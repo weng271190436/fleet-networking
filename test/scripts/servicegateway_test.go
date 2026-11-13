@@ -8,10 +8,13 @@ package scripts
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 func serviceGatewayScriptEnvironment(t *testing.T) {
@@ -27,6 +30,7 @@ func serviceGatewayScriptEnvironment(t *testing.T) {
 	t.Setenv("AZURE_RESOURCE_GROUP", "sg-proof-test")
 	t.Setenv("SERVICE_GATEWAY_CUTOVER_APPROVED", "true")
 	t.Setenv("SERVICE_GATEWAY_USER_OBJECT_ID", "22222222-2222-2222-2222-222222222222")
+	t.Setenv("SERVICE_GATEWAY_RESUME_INSTALL", "false")
 }
 
 func TestServiceGatewayMakeScenarioConfiguration(t *testing.T) {
@@ -101,6 +105,9 @@ func TestServiceGatewayRunnerRequiresSuccessfulSetup(t *testing.T) {
 		t.Fatalf("runner failed: %v\n%s", err, output)
 	}
 	args := readAFDFile(t, log)
+	if !strings.HasPrefix(args, "test -v ") {
+		t.Fatalf("runner must stream live test progress with go test -v: %s", args)
+	}
 	if !strings.Contains(args, "-ginkgo.label-filter=service-gateway-proof") ||
 		!strings.Contains(args, "-ginkgo.json-report="+filepath.Join(state, "report.json")) {
 		t.Fatalf("runner omitted isolated proof or durable report: %s", args)
@@ -147,6 +154,134 @@ func TestServiceGatewayCleanupRefusesImplicitDeletion(t *testing.T) {
 	}
 }
 
+func TestServiceGatewayResumeInstallSkipsProvisioning(t *testing.T) {
+	for _, tt := range []struct {
+		name, tags     string
+		failBeforeHelm bool
+	}{
+		{"existing images", `["sg-existing"]`, false},
+		{"ambiguous images", `["sg-old","sg-new"]`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceGatewayScriptEnvironment(t)
+			t.Setenv("SERVICE_GATEWAY_RESUME_INSTALL", "true")
+			t.Setenv("SG_TEST_TAGS", tt.tags)
+			state := filepath.Join(os.Getenv("HOME"), ".local/state/fleet-networking/service-gateway",
+				os.Getenv("AZURE_SUBSCRIPTION_ID"), os.Getenv("AZURE_RESOURCE_GROUP"))
+			if err := os.MkdirAll(state, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(state, "kubeconfig"), []byte("retained"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			log := filepath.Join(t.TempDir(), "commands")
+			t.Setenv("SG_TEST_LOG", log)
+			bin := t.TempDir()
+			writeAFDCommand(t, filepath.Join(bin, "az"), `#!/bin/bash
+	printf 'az %s\n' "$*" >> "$SG_TEST_LOG"
+	case "$1 $2" in
+	  "feature show"|"provider show") echo Registered ;;
+	  "group exists") echo true ;;
+	  "group show") echo '{"tags":{"purpose":"fleet-service-gateway-e2e"},"location":"eastus2euap"}' ;;
+	  "aks show")
+	    while [[ $# -gt 0 ]]; do if [[ "$1" == -n ]]; then cluster="$2"; break; fi; shift; done
+	    printf '{"provisioningState":"Succeeded","location":"eastus2euap","fqdn":"%s.example","networkProfile":{"loadBalancerSku":"standard","outboundType":"loadBalancer"},"identityProfile":{"kubeletidentity":{"clientId":"client","objectId":"principal"}},"nodeResourceGroup":"nodes"}\n' "$cluster" ;;
+	  "acr show") echo registry.azurecr.io ;;
+	  "acr repository") echo "$SG_TEST_TAGS" ;;
+	  *) echo "Unexpected Azure write: $*" >&2; exit 91 ;;
+	esac
+	`)
+			writeAFDCommand(t, filepath.Join(bin, "kubectl"), `#!/bin/bash
+	printf 'kubectl %s\n' "$*" >> "$SG_TEST_LOG"
+	if [[ "$*" == *"config view"* ]]; then echo "https://${2%-admin}.example"; fi
+	`)
+			writeAFDCommand(t, filepath.Join(bin, "helm"), `#!/bin/bash
+	[[ -d "$HELM_PLUGINS" && -z "$(ls -A "$HELM_PLUGINS")" ]] || exit 92
+	printf 'helm %s\n' "$*" >> "$SG_TEST_LOG"
+	echo "injected first Helm install failure" >&2
+	exit 23
+	`)
+			writeAFDCommand(t, filepath.Join(bin, "curl"), "#!/bin/bash\necho 203.0.113.10\n")
+			writeAFDCommand(t, filepath.Join(bin, "go"), "#!/bin/bash\necho /module-dir\n")
+			writeAFDCommand(t, filepath.Join(bin, "docker"), `#!/bin/bash
+	echo "docker $*" >> "$SG_TEST_LOG"
+	[[ "$*" == info ]]
+	`)
+			for _, tool := range []string{"kubelogin", "ssh-keygen", "timeout"} {
+				writeAFDCommand(t, filepath.Join(bin, tool), "#!/bin/bash\nexit 91\n")
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			output, err := runAFDScript(t, "./bootstrap.sh")
+			if err == nil {
+				t.Fatalf("expected stop at injected failure: %s", output)
+			}
+			commands := readAFDFile(t, log)
+			if tt.failBeforeHelm {
+				if strings.Contains(commands, "helm ") || !strings.Contains(output, "ambiguous resume") {
+					t.Fatalf("ambiguous images allowed install: %s\n%s", commands, output)
+				}
+			} else if !strings.Contains(output, "injected first Helm install failure") ||
+				!strings.Contains(commands, "--set createSystemNamespace=false") {
+				t.Fatalf("resume did not reuse externally managed namespaces: %s\n%s", commands, output)
+			}
+			for _, forbidden := range []string{"deployment group create", "group create", "identity create", "docker build", "acr create", "group delete"} {
+				if strings.Contains(commands, forbidden) {
+					t.Fatalf("resume performed %s: %s", forbidden, commands)
+				}
+			}
+			matches, _ := filepath.Glob(filepath.Join(state, "helm-plugins.*"))
+			if len(matches) != 0 {
+				t.Fatalf("temporary Helm plugin directory leaked: %v", matches)
+			}
+		})
+	}
+}
+
+func TestFixtureChartsCanReuseSystemNamespace(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("Helm required for fixture chart regression")
+	}
+	t.Setenv("HELM_PLUGINS", t.TempDir())
+	for _, chart := range []string{"hub", "members"} {
+		for _, create := range []string{"true", "false"} {
+			t.Run(chart+"/"+create, func(t *testing.T) {
+				args := []string{"template", "fixture", filepath.Join("..", "..", "examples", "getting-started", "charts", chart),
+					"--set", "createSystemNamespace=" + create, "--set", "memberID=member-1",
+					"--set", "memberClusterConfigs[0].memberID=member-1", "--set", "memberClusterConfigs[0].principalID=principal"}
+				output, err := exec.Command("helm", args...).CombinedOutput()
+				if err != nil {
+					t.Fatalf("fixture render: %v\n%s", err, output)
+				}
+				count := 0
+				for _, doc := range strings.Split(string(output), "\n---") {
+					var object struct {
+						Kind     string
+						Metadata struct{ Name string }
+					}
+					if err := yaml.Unmarshal([]byte(doc), &object); err != nil {
+						t.Fatal(err)
+					}
+					if object.Kind != "Namespace" {
+						continue
+					}
+					if object.Metadata.Name == "" {
+						t.Fatal("chart rendered empty Namespace name")
+					}
+					if object.Metadata.Name == "fleet-system" {
+						count++
+					}
+				}
+				want := 0
+				if create == "true" {
+					want = 1
+				}
+				if count != want {
+					t.Fatalf("system namespaces=%d want %d", count, want)
+				}
+			})
+		}
+	}
+}
 func TestServiceGatewaySetupTemplates(t *testing.T) {
 	script := readAFDFile(t, "bootstrap-service-gateway.sh")
 	expressions := regexp.MustCompile(`(?s)--arg dns "\$dns" '(\{.*?\})' >`).FindStringSubmatch(script)

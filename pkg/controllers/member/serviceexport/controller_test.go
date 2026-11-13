@@ -123,6 +123,36 @@ func TestMain(m *testing.M) {
 }
 
 // TestIsServiceEligibleForExport tests the isServiceEligibleForExport function.
+func TestExportServiceTypeWithoutAzureFeatures(t *testing.T) {
+	for _, serviceType := range []corev1.ServiceType{corev1.ServiceTypeClusterIP, corev1.ServiceTypeLoadBalancer} {
+		t.Run(string(serviceType), func(t *testing.T) {
+			service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: svcName, Namespace: memberUserNS, UID: "source-service"},
+				Spec: corev1.ServiceSpec{Type: serviceType, Ports: []corev1.ServicePort{{Name: "http", Port: 80, TargetPort: intstr.FromInt32(8080)}}}}
+			export := &fleetnetv1beta1.ServiceExport{ObjectMeta: metav1.ObjectMeta{Name: svcName, Namespace: memberUserNS}}
+			member := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(export).Build()
+			hub := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+			r := &Reconciler{MemberClient: member, HubClient: hub, HubNamespace: hubNSForMember, MemberClusterID: "member-1"}
+			for _, currentType := range []corev1.ServiceType{serviceType, corev1.ServiceTypeNodePort} {
+				service.Spec.Type = currentType
+				if _, err := r.exportService(context.Background(), export, service, time.Now(), 1); err != nil {
+					t.Fatal(err)
+				}
+				var got fleetnetv1alpha1.InternalServiceExport
+				key := types.NamespacedName{Namespace: hubNSForMember, Name: formatInternalServiceExportName(export)}
+				if err := hub.Get(context.Background(), key, &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.Spec.Type != currentType {
+					t.Fatalf("exported type=%q want %q", got.Spec.Type, currentType)
+				}
+				if got.Spec.PrivateLinkOrigin != nil {
+					t.Fatal("baseline export unexpectedly populated Azure origin metadata")
+				}
+			}
+		})
+	}
+}
+
 func TestIsServiceEligibleForExport(t *testing.T) {
 	testCases := []struct {
 		name string

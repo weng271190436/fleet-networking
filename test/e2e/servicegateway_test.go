@@ -169,6 +169,11 @@ var _ = Describe("Service Gateway TCP proof", Serial, Label("service-gateway-pro
 			if err := serviceGatewayLinks(ctx, api, config, config.GatewayID); err != nil {
 				return err
 			}
+			for _, member := range memberClusters {
+				if err := serviceGatewayNodesReady(ctx, member); err != nil {
+					return err
+				}
+			}
 			if err := serviceGatewayAzureGraph(ctx, api, config, identity, vip); err != nil {
 				return err
 			}
@@ -186,6 +191,7 @@ var _ = Describe("Service Gateway TCP proof", Serial, Label("service-gateway-pro
 			return serviceGatewayTraffic(ctx, vip, memberClusterNames)
 		}, 10*time.Minute, 10*time.Second).Should(Succeed(),
 			"Provision approved client-to-pod targetPort 8080 rules in all applicable NSGs; the test does not weaken network policy")
+		AddReportEntry("Service Gateway traffic proof", "100 successful independent TCP requests reached both members")
 
 		By("withdrawing one member's ready endpoints while retaining the other and shared egress")
 		member := memberClusters[0]
@@ -546,7 +552,11 @@ func serviceGatewayLinks(ctx context.Context, api sg.API, config sg.Config, expe
 }
 
 func serviceGatewayTraffic(ctx context.Context, vip string, members []string) error {
-	httpClient := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// Each request must use a new TCP flow; L4 balancing does not redistribute
+	// requests multiplexed over one HTTP keep-alive connection.
+	transport := &http.Transport{DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	httpClient := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	var replies []string
 	for i := 0; i < 100; i++ {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+vip+"/", nil)
@@ -573,7 +583,6 @@ func serviceGatewayTraffic(ctx context.Context, vip string, members []string) er
 	if err := serviceGatewayReplies(replies, members); err != nil {
 		return err
 	}
-	AddReportEntry("Service Gateway 100-request batch", replies)
 	return nil
 }
 

@@ -34,6 +34,11 @@ TCPRoute backend sends traffic directly to member pods.
 - Only resources tagged with the Gateway UID can be reconciled or deleted.
   Existing unowned resources are rejected, not adopted. Do not point this
   controller at the manually created lab resources.
+- Azure Network RP rejects conditional public-IP creation with `If-None-Match`.
+  Creation rechecks absence before an ordinary PUT; that is not atomic.
+  Use a dedicated resource group/names reserved exclusively for this controller.
+  Updates and deletes retain ETag conditions. Concurrent external creators in
+  the same resource names are not supported.
 - The controller records subnet rollback intent on the Gateway before Azure
   writes. Configuration is immutable during enrollment. Do not edit/remove
   its journal or finalizer.
@@ -189,7 +194,19 @@ withdrawal/restoration, and last-route teardown. Final assertions require
 restored subnet links, removed owned resources, fresh node leases, and new
 ready workloads after detach.
 
-It is **not run by default**, and has not been executed against live Azure.
+It is **not run by default**. On 2026-11-13 an installed-controller run passed
+against the dedicated East US 2 EUAP hub/two-member environment after the
+live export, request-header, NSG rule-name and independent-flow test fixes.
+It verified two-member ingress, readiness withdrawal/restoration, owned
+network cleanup, fresh node leases and new ready workloads after detach.
+This is one topology/run, not production migration support.
+
+Separate controlled probes verified reflected NAT egress on the same test
+nodes with two-stage and single-request NAT association, inbound membership,
+and partial/full address-location updates. An earlier controller run lost
+node egress despite successful ARM state; its exact cause is not established.
+The passing run used fresh network resource names and recovered member agents.
+Do not treat resource-name reuse or provisioning order as a proven root cause.
 See the [E2E prerequisites and isolated invocation](../../test/README.md#service-gateway-tcp-live-proof).
 Do not point it at the retained manual lab or existing unowned resources.
 Failure retains Kubernetes fixtures and enrolled networking for diagnosis;

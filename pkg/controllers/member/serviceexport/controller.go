@@ -304,12 +304,12 @@ func (r *Reconciler) exportService(ctx context.Context, svcExport *fleetnetv1bet
 		}
 
 		internalSvcExport.Spec.Ports = svcExportPorts
+		internalSvcExport.Spec.Type = svc.Spec.Type
 		internalSvcExport.Spec.ServiceReference.UpdateFromMetaObject(svc.ObjectMeta, metav1.NewTime(exportedSince))
 		// Replace even with nil/failed discovery so old private readiness cannot survive drift or disablement.
 		internalSvcExport.Spec.PrivateLinkOrigin = privateOrigin
 
 		if r.EnablePrivateLinkOriginDiscovery {
-			internalSvcExport.Spec.Type = svc.Spec.Type
 			internalSvcExport.Spec.IsInternalLoadBalancer = svc.Annotations[objectmeta.ServiceAnnotationAzureLoadBalancerInternal] == internalLoadBalancerEnabled
 			internalSvcExport.Spec.Weight = ptr.To(exportWeight)
 		}

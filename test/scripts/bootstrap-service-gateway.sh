@@ -2,6 +2,11 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/e2e-config.sh"
+resume_install="${SERVICE_GATEWAY_RESUME_INSTALL:-false}"
+if [[ "$resume_install" != true && "$resume_install" != false ]]; then
+  echo "error: SERVICE_GATEWAY_RESUME_INSTALL must be true or false" >&2
+  exit 1
+fi
 if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" != true ]]; then
   echo "error: dedicated Service Gateway setup requires ENABLE_SERVICE_GATEWAY_PROOF=true" >&2
   exit 1
@@ -35,16 +40,28 @@ for provider in Microsoft.ContainerService Microsoft.Network Microsoft.ManagedId
   state=$(az provider show --subscription "$AZURE_SUBSCRIPTION_ID" --namespace "$provider" --query registrationState -o tsv)
   [[ "$state" == Registered ]] || { echo "error: provider $provider is $state" >&2; exit 1; }
 done
-if [[ "$(az group exists --subscription "$AZURE_SUBSCRIPTION_ID" -n "$AZURE_RESOURCE_GROUP")" == true ]]; then
+group_exists=$(az group exists --subscription "$AZURE_SUBSCRIPTION_ID" -n "$AZURE_RESOURCE_GROUP")
+if [[ "$resume_install" == true ]]; then
+  if [[ "$group_exists" != true || ! -f "$KUBECONFIG" ]]; then
+    echo "error: install-only resume requires the retained resource group and dedicated kubeconfig" >&2
+    exit 1
+  fi
+  group=$(az group show --subscription "$AZURE_SUBSCRIPTION_ID" -n "$AZURE_RESOURCE_GROUP" -o json)
+  jq -e --arg loc "$location" '.tags.purpose=="fleet-service-gateway-e2e" and .location==$loc' \
+    <<<"$group" >/dev/null || { echo "error: resource group is not the expected dedicated setup" >&2; exit 1; }
+elif [[ "$group_exists" == true ]]; then
   echo "error: use a fresh dedicated resource group; inspect any previous failed setup before choosing another" >&2
   exit 1
 fi
-if [[ -e "$SERVICE_GATEWAY_STATE_DIR" ]]; then
+if [[ "$resume_install" != true && -e "$SERVICE_GATEWAY_STATE_DIR" ]]; then
   echo "error: local state already exists; inspect $SERVICE_GATEWAY_STATE_DIR before retrying" >&2
   exit 1
 fi
 umask 077
 mkdir -p "$SERVICE_GATEWAY_STATE_DIR"
+export HELM_PLUGINS
+HELM_PLUGINS=$(mktemp -d "$SERVICE_GATEWAY_STATE_DIR/helm-plugins.XXXXXX")
+trap 'rmdir "$HELM_PLUGINS"' EXIT
 trap 'status=$?; echo "Service Gateway setup failed (status $status). All Azure resources and local state are retained: $SERVICE_GATEWAY_STATE_DIR" >&2' ERR
 trap 'echo "Interrupted; all Service Gateway setup resources are retained" >&2; exit 130' INT
 trap 'echo "Terminated; all Service Gateway setup resources are retained" >&2; exit 143' TERM
@@ -61,6 +78,8 @@ role() {
     --url "$arm$scope/providers/Microsoft.Authorization/roleAssignments/$name?api-version=2022-04-01" \
     --body "$body" -o none
 }
+declare -A clients principals node_groups
+if [[ "$resume_install" != true ]]; then
 az group create --subscription "$AZURE_SUBSCRIPTION_ID" -n "$AZURE_RESOURCE_GROUP" -l "$location" \
   --tags purpose=fleet-service-gateway-e2e retain=true -o none
 az network vnet create --subscription "$AZURE_SUBSCRIPTION_ID" -g "$AZURE_RESOURCE_GROUP" \
@@ -70,7 +89,6 @@ az network vnet subnet create --subscription "$AZURE_SUBSCRIPTION_ID" -g "$AZURE
   --vnet-name members -n member-2 --address-prefixes 172.24.4.0/22 -o none
 ssh-keygen -q -t rsa -b 3072 -N '' -f "$SERVICE_GATEWAY_STATE_DIR/id_rsa"
 key=$(cat "$SERVICE_GATEWAY_STATE_DIR/id_rsa.pub")
-declare -A clients principals node_groups
 for cluster in hub member-1 member-2; do
   echo "Creating $cluster (ordinary Standard LB/Azure CNI, Entra/Azure RBAC enabled)"
   identity=$(az identity create --subscription "$AZURE_SUBSCRIPTION_ID" -g "$AZURE_RESOURCE_GROUP" \
@@ -140,6 +158,46 @@ for component in hub-net-controller-manager member-net-controller-manager hub-ga
   docker push "$registry/$component:$tag"
 done
 
+jq -n --arg registry "$registry" --arg tag "$tag" '{registry:$registry,tag:$tag}' \
+  > "$SERVICE_GATEWAY_STATE_DIR/images.json"
+else
+  for cluster in hub member-1 member-2; do
+    cluster_json=$(az aks show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$AZURE_RESOURCE_GROUP" -n "$cluster" -o json)
+    jq -e --arg loc "$location" '.provisioningState=="Succeeded" and .location==$loc and
+      .networkProfile.loadBalancerSku=="standard" and .networkProfile.outboundType=="loadBalancer"' \
+      <<<"$cluster_json" >/dev/null || { echo "error: unexpected retained cluster $cluster" >&2; exit 1; }
+    server=$(kubectl --context "$cluster-admin" config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+    fqdn=$(jq -er .fqdn <<<"$cluster_json")
+    [[ "$server" == "https://$fqdn" || "$server" == "https://$fqdn:443" ]] || {
+      echo "error: retained kubeconfig points outside the expected $cluster cluster" >&2; exit 1;
+    }
+    kubectl --context "$cluster-admin" wait --for=condition=Ready nodes --all --timeout=10m
+    clients[$cluster]=$(jq -er '.identityProfile.kubeletidentity.clientId' <<<"$cluster_json")
+    principals[$cluster]=$(jq -er '.identityProfile.kubeletidentity.objectId' <<<"$cluster_json")
+    node_groups[$cluster]=$(jq -er .nodeResourceGroup <<<"$cluster_json")
+  done
+  acr_name=$(python3 -c 'import hashlib,sys; print("fleetsg"+hashlib.sha256(sys.argv[1].encode()).hexdigest()[:20])' "$base")
+  registry=$(az acr show --subscription "$AZURE_SUBSCRIPTION_ID" -n "$acr_name" --query loginServer -o tsv)
+  # Older failed setups have no images checkpoint. Require a single common
+  # published tag instead of selecting arbitrary images or rebuilding clusters.
+  common='null'
+  for component in hub-net-controller-manager member-net-controller-manager hub-gateway-controller-manager; do
+    tags=$(az acr repository show-tags --subscription "$AZURE_SUBSCRIPTION_ID" -n "$acr_name" \
+      --repository "$component" -o json)
+    common=$(jq -n --argjson previous "$common" --argjson tags "$tags" \
+      'if $previous==null then $tags else [$previous[] | select(. as $tag | $tags | index($tag))] end')
+  done
+  if [[ -f "$SERVICE_GATEWAY_STATE_DIR/images.json" ]]; then
+    tag=$(jq -er --arg registry "$registry" 'select(.registry==$registry)|.tag' "$SERVICE_GATEWAY_STATE_DIR/images.json")
+    jq -e --arg tag "$tag" 'index($tag)!=null' <<<"$common" >/dev/null
+  else
+    tag=$(jq -er 'if length==1 then .[0] else error("Expected one common controller image tag; refusing ambiguous resume") end' <<<"$common")
+    jq -n --arg registry "$registry" --arg tag "$tag" '{registry:$registry,tag:$tag}' \
+      > "$SERVICE_GATEWAY_STATE_DIR/images.json"
+  fi
+  echo "Resuming installation with retained images $registry/*:$tag; no cluster creation or image builds."
+fi
+
 # Install existing Fleet transports; no mock hub objects or direct provider provisioning.
 fleet_dir=$(go list -m -f '{{.Dir}}' go.goms.io/fleet)
 gateway_dir=$(go list -m -f '{{.Dir}}' sigs.k8s.io/gateway-api)
@@ -156,7 +214,8 @@ for cluster in hub member-1 member-2; do
   kubectl --context "$cluster-admin" create namespace fleet-system --dry-run=client -o yaml |
     kubectl --context "$cluster-admin" apply -f -
 done
-helm install e2e-hub-resources ./examples/getting-started/charts/hub --kube-context hub-admin \
+helm upgrade --install e2e-hub-resources ./examples/getting-started/charts/hub --kube-context hub-admin \
+  --namespace default --set createSystemNamespace=false \
   --set 'memberClusterConfigs[0].memberID=member-1' --set "memberClusterConfigs[0].principalID=${principals[member-1]}" \
   --set 'memberClusterConfigs[1].memberID=member-2' --set "memberClusterConfigs[1].principalID=${principals[member-2]}"
 # Azure RBAC-enabled API servers need an explicit data-plane grant in addition
@@ -165,14 +224,14 @@ for member in member-1 member-2; do
   role "${principals[$member]}" ServicePrincipal a7ffa36f-339b-4b5c-8bdf-e2c188b2c0eb \
     "$base/providers/Microsoft.ContainerService/managedClusters/hub/namespaces/fleet-member-$member"
 done
-helm install hub-net-controller-manager ./charts/hub-net-controller-manager --kube-context hub-admin \
+helm upgrade --install hub-net-controller-manager ./charts/hub-net-controller-manager --kube-context hub-admin \
   --namespace fleet-system --set "image.repository=$registry/hub-net-controller-manager" \
   --set "image.tag=$tag" --set enableTrafficManagerFeature=false --wait --timeout 15m
 hub_url=$(kubectl --context hub-admin config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 for member in member-1 member-2; do
-  helm install e2e-member-resources ./examples/getting-started/charts/members \
-    --kube-context "$member-admin" --set "memberID=$member"
-  helm install member-net-controller-manager ./charts/member-net-controller-manager \
+  helm upgrade --install e2e-member-resources ./examples/getting-started/charts/members \
+    --kube-context "$member-admin" --namespace default --set createSystemNamespace=false --set "memberID=$member"
+  helm upgrade --install member-net-controller-manager ./charts/member-net-controller-manager \
     --kube-context "$member-admin" --namespace fleet-system \
     --set "image.repository=$registry/member-net-controller-manager" --set "image.tag=$tag" \
     --set enableTrafficManagerFeature=false --set enableServiceGatewayExport=true \
@@ -187,8 +246,8 @@ cloud=$(jq -n --arg sub "$AZURE_SUBSCRIPTION_ID" --arg tenant "$tenant" --arg cl
     cloud:"AzurePublicCloud",subscriptionId:$sub,tenantId:$tenant,useManagedIdentityExtension:true,
     userAssignedIdentityID:$client,resourceGroup:$group,location:$location}')
 kubectl --context hub-admin -n fleet-system create secret generic service-gateway-cloud-config \
-  --from-literal="azure.json=$cloud"
-helm install hub-gateway-controller-manager ./charts/hub-gateway-controller-manager --kube-context hub-admin \
+  --from-literal="azure.json=$cloud" --dry-run=client -o yaml | kubectl --context hub-admin apply -f -
+helm upgrade --install hub-gateway-controller-manager ./charts/hub-gateway-controller-manager --kube-context hub-admin \
   --namespace fleet-system --set "image.repository=$registry/hub-gateway-controller-manager" \
   --set "image.tag=$tag" --set afd.enabled=false --set serviceGateway.enabled=true \
   --set gatewayClass.create=false --set afd.cloudConfigSecret.name=service-gateway-cloud-config \
@@ -210,7 +269,7 @@ for member in member-1 member-2; do
     priority=$(az network nsg show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$nsg_group" -n "$nsg_name" -o json |
       jq -er '[.securityRules[].priority] as $used|[range(200;4097)|. as $n|select($used|index($n)|not)][0]')
     az network nsg rule create --subscription "$AZURE_SUBSCRIPTION_ID" -g "$nsg_group" --nsg-name "$nsg_name" \
-      -n fleet-sg-e2e-client --priority "$priority" --access Allow --protocol Tcp \
+      -n "fleet-sg-e2e-client-$member" --priority "$priority" --access Allow --protocol Tcp \
       --source-address-prefixes "$client_ip/32" --destination-address-prefixes "$prefix" \
       --destination-port-ranges 8080 -o none
   done < <(printf '%s\n%s\n' "$nsg_ids" "$subnet_nsg" | sort -u)

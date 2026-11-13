@@ -12,7 +12,7 @@ if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" == true ]]; then
     echo "error: run make e2e-setup successfully for this Service Gateway resource group first" >&2
     exit 1
   fi
-  exec go test -count=1 -tags=e2e -timeout=130m ./test/e2e \
+  exec go test -v -count=1 -tags=e2e -timeout=130m ./test/e2e \
     -args -ginkgo.v -ginkgo.label-filter=service-gateway-proof \
     -ginkgo.timeout=125m "-ginkgo.json-report=$SERVICE_GATEWAY_STATE_DIR/report.json"
 fi

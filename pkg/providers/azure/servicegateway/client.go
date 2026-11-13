@@ -18,6 +18,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
+	"go.goms.io/fleet-networking/pkg/common/azureerrors"
 )
 
 type Resource struct {
@@ -71,9 +72,7 @@ func (a *ARMAPI) requestEndpoint(ctx context.Context, method, endpoint string, b
 	if err != nil {
 		return nil, err
 	}
-	if etag == "*" {
-		req.Raw().Header.Set("If-None-Match", "*")
-	} else if etag != "" {
+	if etag != "" {
 		req.Raw().Header.Set("If-Match", etag)
 	}
 	if body != nil {
@@ -141,6 +140,18 @@ func (a *ARMAPI) List(ctx context.Context, id string) ([]Resource, error) {
 }
 
 func (a *ARMAPI) Put(ctx context.Context, id string, body Resource, etag string) error {
+	if etag == "*" {
+		// Network RP rejects If-None-Match creation on public IPs. Recheck
+		// absence, but do not claim atomic create-only ownership protection.
+		_, err := a.Get(ctx, id)
+		if err == nil {
+			return fmt.Errorf("resource appeared before creation; refusing to overwrite %s", id)
+		}
+		if !azureerrors.IsNotFound(err) {
+			return err
+		}
+		etag = ""
+	}
 	response, err := a.request(ctx, http.MethodPut, id, body, etag)
 	if err != nil {
 		return err

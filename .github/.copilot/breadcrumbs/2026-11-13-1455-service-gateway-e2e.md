@@ -86,3 +86,114 @@ live-file compilation, `go vet ./test/scripts`, and whitespace checks.
 The new setup has not been executed against Azure: quota, policy, identity
 propagation, preview capacity, node migration and packet delivery are still
 live validation risks.
+
+## Installation recovery: namespace ownership and global Helm plugin
+
+The first live setup reached chart installation but failed because bootstrap
+had already created `fleet-system` and the example fixture chart also rendered
+it as a Helm-owned Namespace. The member fixture chart had the same problem.
+Both charts now offer `createSystemNamespace` (default true), disabled by this
+installer. Their optional user Namespace conditional was also corrected so
+an empty `userNS` does not produce an invalid unnamed Namespace.
+
+The installed global helm-unittest plugin was incompatible with the local Helm
+version. Setup now isolates plugins using an empty temporary directory and
+removes it on exit, without changing global plugins.
+
+Explicit `SERVICE_GATEWAY_RESUME_INSTALL=true` verifies the retained dedicated
+group, cluster provisioning/profile, kubeconfig endpoints and common controller
+image tag, then skips infrastructure creation and image builds. Published image
+metadata is checkpointed for new setups. Legacy failures can recover only with
+one unambiguous common image tag. Install calls use upgrade/install and an
+idempotent Secret apply. No adoption flags or namespace deletion are used.
+
+Regression checks cover real fixture chart rendering (default creation and
+externally managed namespace modes), install-only resume through the first
+Helm call, refusal of ambiguous images, absence of infrastructure writes/builds
+during resume, and temporary-plugin-directory cleanup on failure.
+No live Azure or Kubernetes resources were changed while implementing the fix.
+
+## Live proof repair: 2026-11-13
+
+The user authorized repairing the active live test in dedicated resource group
+`fleet-sg-e2e-20261113151410`; the older manually validated lab was not touched.
+
+Confirmed and fixed:
+
+- InternalServiceExport omitted Service type when both Traffic Manager and
+  private-origin discovery were disabled. Service type is now transported
+  independently of those features. A new member image was pushed and rolled
+  out to both members; accepted exports then reported ClusterIP.
+- Network RP rejected public-IP creation with `If-None-Match: *` with HTTP 404.
+  A dedicated diagnostic PIP reproduced this, succeeded without the header,
+  and was deleted afterward. ARM client creation now rechecks absence before
+  ordinary PUT; this is explicitly documented as non-atomic and restricted to
+  dedicated controller-reserved names. Existing-resource ETag checks remain.
+  Fixed hub image was pushed and rolled out.
+- Both member subnets referenced the same policy-managed NSG. A shared
+  ingress-rule name overwrote the first member's destination prefix. Setup now
+  names rules per member. Live narrow source/port rules were corrected.
+- HTTP keep-alive tested a single L4 flow. Proof requests now use independent
+  connections; a local HTTP server regression requires exactly 100 TCP flows.
+- Go test output now streams with `-v`.
+
+The original running binary was gracefully interrupted because it could not
+load the traffic fix. Its route was removed and controller withdrawal verified
+before starting a corrected proof on the same clusters. The corrected run
+observed owned Azure resources and passed 100 independent requests across both
+members at VIP `48.223.40.254`.
+
+The readiness phase exposed a remaining live failure: both member clusters
+lost node outbound HTTPS/API connectivity after enrollment; all four nodes
+became NotReady even though gateway/NAT/default service ARM state was
+Succeeded. The exact platform/configuration cause is not established.
+The corrected test was interrupted, its route removed, and the controller
+restored subnet associations/deleted its owned network. All four nodes were
+verified Ready afterward. Gateways/namespaces and diagnostics are retained;
+the failed test is not a full lifecycle pass. The proof now checks member
+node health while observing the initial programmed graph.
+
+Dedicated state contains `fixed-proof-run.log`, JSON report, per-component
+repair image names, and a 100-response diagnostic batch. Do not blindly run
+install-only resume: its original image checkpoint predates these repair
+images. No cluster/resource-group deletion was performed.
+
+## Gateway/NAT isolation and passing live proof
+
+The user requested further live investigation of the gateway/NAT setup.
+Read-only comparison found no decisive configuration difference between the
+successful original manual lab and the failed controller snapshots.
+
+Bounded probes on dedicated E2E member-1 (and the last probe on both members)
+verified:
+
+- Two-step NAT creation/association produced the expected reflected public IP.
+- Inline NAT creation/association also worked; it is not inherently broken.
+- Partial/full inbound address-location updates, including repeated identical
+  service/location requests, preserved reflected NAT egress in isolation.
+- The exact `fleet-default-egress` registration shape worked with both subnets
+  linked, without needing a new outbound field.
+- Each probe restored prior subnet associations. Diagnostic Azure resources
+  were retained but left unlinked; no old manual-lab resources were changed.
+
+Member agents needed a rollout restart after the repeated connectivity
+transitions; their fresh deployments and all nodes recovered.
+A first fresh-proof attempt correctly stopped at preflight because a member
+agent was unavailable; it performed no network enrollment.
+
+The subsequent installed-controller proof passed (JSON report SuiteSucceeded
+true; live spec duration about 178 seconds):
+
+1. Fresh owned resources and both subnets observed in the programmed graph.
+2. 100 independent successful requests reached both members.
+3. Member-1 readiness withdrawal and restoration converged, with traffic checks.
+4. Last-route removal restored subnets and deleted owned resources.
+5. Fresh node leases and new post-detach workloads passed.
+6. All four nodes were verified Ready after suite completion.
+
+The configuration now uses fresh `e2e-164941` network resource names. The
+passing report and verbose `fresh-egress-proof-after-agent-recovery.log` are
+retained in the dedicated local state directory. No further NAT provider
+behavior was changed based on an unproven hypothesis. The exact cause of the
+earlier egress failure remains unresolved; a passing run does not justify
+claiming a particular ordering, resource-name reuse issue or platform bug.

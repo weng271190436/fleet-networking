@@ -71,6 +71,15 @@ flags required by `test/e2e/traffic_manager_test.go`. Tests in that file skip wh
 
 ### Service Gateway TCP live proof
 
+**Live result (2026-11-13):** the installed-controller proof passed in the
+dedicated `fleet-sg-e2e-20261113151410` environment: shared ingress reached both
+members in 100 independent requests, endpoint readiness withdrawal/restoration
+passed, and last-route cleanup restored subnet associations and original
+cluster health. All four nodes were Ready afterward. Fresh network identities
+were used after recovering member agents from a preceding failed cutover.
+That earlier egress failure remains unexplained; one successful run is not
+proof of production migration safety.
+
 This is a destructive, explicitly opted-in network-lifecycle test, not part of
 ordinary networking or AFD validation. Do not run until the subscription,
 resource scopes, and subnet egress cutover have been approved.
@@ -110,10 +119,33 @@ derive a private kubeconfig, network configuration, setup marker and JSON report
 under
 `~/.local/state/fleet-networking/service-gateway/$AZURE_SUBSCRIPTION_ID/$AZURE_RESOURCE_GROUP`.
 They do not overwrite your normal kubeconfig or touch the earlier manual lab.
-Setup refuses an existing resource group/state directory. On setup failure,
+Fresh setup refuses an existing resource group/state directory. On setup failure,
 inspect retained resources rather than blindly selecting a new group. No
 automatic resource-group cleanup is performed; `make e2e-cleanup` refuses this
 scenario until an explicit inspected cleanup procedure is performed.
+
+If provisioning and image publication completed but controller installation
+failed, keep the same subscription and resource-group variables and resume
+only installation:
+
+```bash
+SERVICE_GATEWAY_RESUME_INSTALL=true make e2e-setup
+make e2e-tests
+```
+
+Install-only resume verifies the dedicated resource-group tag/location, all
+three provisioned clusters and their kubeconfig endpoints, and the published
+controller image tag. It does **not** create clusters, modify the VNet, or build
+images. Earlier setups without an image checkpoint must have exactly one
+common published tag across the three controller repositories; ambiguous
+images stop the resume. This is not a recovery mode for partial provisioning.
+
+The setup manages `fleet-system` separately from the example fixture charts
+(`createSystemNamespace=false`), so retrying does not require adopting or
+deleting existing namespaces. Optional user namespaces are rendered only
+when named. Helm uses an empty per-invocation plugin directory, removed at
+exit, to prevent unrelated globally installed plugins from breaking chart
+installation. Your global Helm configuration and plugins are unchanged.
 
 Local prerequisites: Azure CLI logged into the approved tenant, Go at the
 go.mod version, Docker capable of Linux/amd64 builds, Helm, kubectl, kubelogin,

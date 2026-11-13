@@ -7,3 +7,5 @@ userNS:
 
 # The namespace for Fleet controllers and resources.
 systemNS: fleet-system
+# Disable when the installer manages systemNS outside this release.
+createSystemNamespace: true
