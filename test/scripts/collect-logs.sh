@@ -7,6 +7,9 @@ set -o pipefail
 # Script to collect logs from fleet networking agents across all clusters
 
 SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")
+if [[ "${ENABLE_SERVICE_GATEWAY_PROOF:-false}" == true ]]; then
+  source "$SCRIPT_ROOT/e2e-config.sh"
+fi
 FLEET_NAMESPACE="${FLEET_NAMESPACE:-fleet-system}"
 
 # Use a timestamp in the log directory name
@@ -163,6 +166,9 @@ echo "=== Starting log collection at $(date) ==="
 if check_cluster_context "${HUB_CLUSTER}"; then
     echo "Collecting logs from hub cluster: ${HUB_CLUSTER}"
     collect_logs "${HUB_CLUSTER}" "app.kubernetes.io/name=hub-net-controller-manager"
+    if [[ "${ENABLE_SERVICE_GATEWAY_PROOF:-false}" == true ]]; then
+        collect_logs "${HUB_CLUSTER}" "app.kubernetes.io/name=hub-gateway-controller-manager"
+    fi
     describe_resources "${HUB_CLUSTER}"
 fi
 

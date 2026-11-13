@@ -365,8 +365,26 @@ func (p *Provider) Reconcile(ctx context.Context, owner string, journal Journal,
 		if err := p.ensure(ctx, owner, lbID, lb); err != nil {
 			return nil, err
 		}
-		requests = append(requests, map[string]any{"isDelete": false, "service": map[string]any{"name": app.Identity, "properties": map[string]any{
-			"serviceType": "Inbound", "loadBalancerBackendPools": []any{map[string]any{"id": poolID, "name": "pods", "properties": map[string]any{"virtualNetwork": map[string]string{"id": config.VNetID}}}}}}})
+		registered := false
+		for _, service := range services {
+			if service.Name != app.Identity {
+				continue
+			}
+			kind, err := field[string](service, "serviceType")
+			if err != nil {
+				return nil, err
+			}
+			if kind != "Inbound" {
+				return nil, fmt.Errorf("service %s has unexpected type %s", app.Identity, kind)
+			}
+			// Its sole owned pool ID was verified above. Do not refresh an
+			// unchanged registration merely because a poll/watch fired.
+			registered = true
+		}
+		if !registered {
+			requests = append(requests, map[string]any{"isDelete": false, "service": map[string]any{"name": app.Identity, "properties": map[string]any{
+				"serviceType": "Inbound", "loadBalancerBackendPools": []any{map[string]any{"id": poolID, "name": "pods", "properties": map[string]any{"virtualNetwork": map[string]string{"id": config.VNetID}}}}}}})
+		}
 		observedPIP, err := p.API.Get(ctx, pipID)
 		if err != nil {
 			return nil, err
@@ -383,8 +401,10 @@ func (p *Provider) Reconcile(ctx context.Context, owner string, journal Journal,
 			removals = append(removals, map[string]any{"isDelete": true, "service": map[string]any{"name": service.Name, "properties": map[string]string{"serviceType": "Inbound"}}})
 		}
 	}
-	if err := p.API.Post(ctx, config.GatewayID+"/updateServices", map[string]any{"action": "PartialUpdate", "serviceRequests": requests}); err != nil {
-		return nil, err
+	if len(requests) != 0 {
+		if err := p.API.Post(ctx, config.GatewayID+"/updateServices", map[string]any{"action": "PartialUpdate", "serviceRequests": requests}); err != nil {
+			return nil, err
+		}
 	}
 	locations := map[string]map[string][]string{}
 	for _, app := range apps {
@@ -397,6 +417,15 @@ func (p *Provider) Reconcile(ctx context.Context, owner string, journal Journal,
 			}
 		}
 	}
+	for _, pods := range locations {
+		for _, identities := range pods {
+			slices.Sort(identities)
+		}
+	}
+	observedLocations, err := p.API.List(ctx, config.GatewayID+"/addressLocations")
+	if err != nil {
+		return nil, err
+	}
 	addressLocations := []any{}
 	for node, pods := range locations {
 		var addresses []any
@@ -405,8 +434,10 @@ func (p *Provider) Reconcile(ctx context.Context, owner string, journal Journal,
 		}
 		addressLocations = append(addressLocations, map[string]any{"addressLocation": node, "addressUpdateAction": "FullUpdate", "addresses": addresses})
 	}
-	if err := p.API.Post(ctx, config.GatewayID+"/updateAddressLocations", map[string]any{"action": "FullUpdate", "addressLocations": addressLocations}); err != nil {
-		return nil, err
+	if !reflect.DeepEqual(locationState(observedLocations), locations) {
+		if err := p.API.Post(ctx, config.GatewayID+"/updateAddressLocations", map[string]any{"action": "FullUpdate", "addressLocations": addressLocations}); err != nil {
+			return nil, err
+		}
 	}
 	if len(removals) != 0 {
 		if err := p.API.Post(ctx, config.GatewayID+"/updateServices", map[string]any{"action": "PartialUpdate", "serviceRequests": removals}); err != nil {
@@ -466,12 +497,22 @@ func (p *Provider) Reconcile(ctx context.Context, owner string, journal Journal,
 			return nil, ErrPending
 		}
 	}
-	observedLocations, err := p.API.List(ctx, config.GatewayID+"/addressLocations")
+	observedLocations, err = p.API.List(ctx, config.GatewayID+"/addressLocations")
 	if err != nil {
 		return nil, err
 	}
+	if !reflect.DeepEqual(locationState(observedLocations), locations) {
+		return nil, ErrPending
+	}
+	return vips, nil
+}
+
+func locationState(observedLocations []Resource) map[string]map[string][]string {
 	actual := map[string]map[string][]string{}
 	for _, location := range observedLocations {
+		if len(location.Addresses) == 0 {
+			continue
+		}
 		if actual[location.AddressLocation] == nil {
 			actual[location.AddressLocation] = map[string][]string{}
 		}
@@ -481,15 +522,7 @@ func (p *Provider) Reconcile(ctx context.Context, owner string, journal Journal,
 			actual[location.AddressLocation][address.Address] = names
 		}
 	}
-	for _, pods := range locations {
-		for _, names := range pods {
-			slices.Sort(names)
-		}
-	}
-	if !reflect.DeepEqual(actual, locations) {
-		return nil, ErrPending
-	}
-	return vips, nil
+	return actual
 }
 
 func (p *Provider) setSubnet(ctx context.Context, id string, subnet Resource, gateway string) error {

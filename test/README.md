@@ -80,6 +80,21 @@ were used after recovering member agents from a preceding failed cutover.
 That earlier egress failure remains unexplained; one successful run is not
 proof of production migration safety.
 
+**Repeat-run regression:** a subsequent run failed readiness withdrawal after
+600 seconds (`gateway membership count=2, expected=1`). Both members became
+NotReady again and stale endpoint export mappings remained. Removing the
+failed proof's TCPRoute triggered ordered withdrawal and all four nodes
+returned to Ready. Repeatability is unresolved; do not enable unattended live
+CI/cutover approval based on the earlier single pass.
+
+**Follow-up (2026-11-13):** the hub now discards superseded source EndpointSlice
+snapshots and avoids writing unchanged gateway state. The same-code comparison
+still failed node egress when recreating deleted root resource IDs, but three
+consecutive runs with never-used IDs passed a stronger proof, including six
+reflected-NAT egress samples per member before readiness testing. This is a
+tested workaround; fixed-ID recreation and its platform cause remain unresolved.
+Do not treat these results as production lifecycle support.
+
 This is a destructive, explicitly opted-in network-lifecycle test, not part of
 ordinary networking or AFD validation. Do not run until the subscription,
 resource scopes, and subnet egress cutover have been approved.
@@ -119,10 +134,17 @@ derive a private kubeconfig, network configuration, setup marker and JSON report
 under
 `~/.local/state/fleet-networking/service-gateway/$AZURE_SUBSCRIPTION_ID/$AZURE_RESOURCE_GROUP`.
 They do not overwrite your normal kubeconfig or touch the earlier manual lab.
+Each `make e2e-tests` derives fresh gateway/NAT/PIP names from the base network
+configuration, preserving the approved resource-group scopes, VNet and subnets.
+The base `network.json` is unchanged. Actual IDs are saved in
+`proof-network.json` and an immutable `proof-network-<run-id>.json`; the previous
+report is kept as `report.previous.json`. A local `flock` rejects concurrent
+proofs on the same environment before replacing any active configuration.
+Do not launch another writer from a different machine against these subnets.
 Fresh setup refuses an existing resource group/state directory. On setup failure,
 inspect retained resources rather than blindly selecting a new group. No
-automatic resource-group cleanup is performed; `make e2e-cleanup` refuses this
-scenario until an explicit inspected cleanup procedure is performed.
+automatic resource-group cleanup is performed locally; `make e2e-cleanup`
+refuses this scenario without explicit approval and successful proof evidence.
 
 If provisioning and image publication completed but controller installation
 failed, keep the same subscription and resource-group variables and resume
@@ -215,10 +237,13 @@ The test checks:
 2. One ClusterIP application per member; real ServiceExport transport;
    controller-generated Gateway VIP; owned gateway/NAT/LB/PIP and exact mappings.
 3. 100 successful requests containing both member identities.
-4. Changing member A's readiness probe (Recreate rollout), removal of its old
+4. Six reflected egress samples per member must match the shared NAT public IP
+   over about one minute; node leases must stay fresh. An ingress-only pass
+   does not establish a healthy cutover.
+5. Changing member A's readiness probe (Recreate rollout), removal of its old
    pod mapping without deleting NAT or detaching subnets, delivery through B,
    then recovery of both members after restoring readiness.
-5. Last-route withdrawal: original subnet associations restored before NAT
+6. Last-route withdrawal: original subnet associations restored before NAT
    disappears, all owned application/shared Azure resources removed, journal
    cleared, fresh member leases, and new workloads available after detach.
 
@@ -249,6 +274,54 @@ go test -count=1 -tags=e2e ./test/e2e -run '^TestServiceGateway'
 
 These `-run` selectors deliberately exclude `TestE2E`, so neither command runs
 the live suite or Azure operations.
+
+#### Service Gateway CI matrix scenario
+
+The existing [E2E workflow](../.github/workflows/e2e-tests.yml) includes an
+isolated `shared-vnet` Service Gateway row alongside AFD and the ordinary
+network scenarios. It uses the same OIDC login/token refresh and
+`make e2e-setup` / `make e2e-tests` lifecycle, not another setup implementation.
+It is **not configured or executed automatically by this code change**.
+
+Before enabling runs, repository administrators must configure the protected
+GitHub environment **`service-gateway-e2e`** with required reviewers and verify
+its Azure OIDC trust, preview-enabled subscription, quota, regional capacity,
+and network-cutover authorization. Use the existing `E2E_AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, and `E2E_AZURE_SUBSCRIPTION_ID` secrets (environment overrides
+may select a dedicated test identity/subscription). Configure environment vars:
+
+| Variable | Required value |
+| --- | --- |
+| `SERVICE_GATEWAY_E2E_CUTOVER_APPROVED` | `true` only after approval of the preview topology and egress cutover |
+| `SERVICE_GATEWAY_E2E_LOCATION` | Approved region; defaults to `eastus2euap` |
+| `SERVICE_GATEWAY_E2E_KUBERNETES_VERSION` | Approved Kubernetes version; defaults to `1.36.3` |
+
+Without explicit cutover approval, the new row fails before provisioning.
+Other rows do not require these variables or this environment's approval.
+
+CI uses `SERVICE_GATEWAY_PRINCIPAL_TYPE=ServicePrincipal`. The bootstrap reads
+its Object ID locally from the Azure CLI ARM token's `oid` claim, without
+printing/storing the token or calling Graph. An explicit
+`SERVICE_GATEWAY_PRINCIPAL_OBJECT_ID` can instead supply that ID. Interactive
+User mode and `SERVICE_GATEWAY_USER_OBJECT_ID` remain compatible. The CI
+principal requires the existing provisioning/role-assignment permissions and
+ACR push access; kubelet identities get scoped private ACR pull access.
+
+Logs and `report.json` have distinct `enable-sg` artifact names. Only the JSON
+report, actual per-run network IDs, non-secret setup inventory, and scoped agent logs are uploaded—not the
+private kubeconfig, SSH keys, or the whole local state directory.
+
+**On CI success:** after artifact collection, cleanup requests deletion of only
+the dedicated environment's resource group. The cleanup script independently
+requires explicit approval, a passing labelled proof report, matching setup
+inventory, detached subnets, absent gateway/NAT/PIP resources, and the expected
+resource-group identity/tag. It does not merely trust the workflow's green step.
+AKS deletion uses its normal managed-node-resource-group lifecycle.
+
+**On failure or cancellation:** the Service Gateway row does not run automatic
+resource-group deletion. The job warns and records the resource-group name for
+an administrator to inspect/recover; ongoing Azure charges apply until approved
+cleanup. The ordinary/AFD cleanup behavior is unchanged.
 
 ### Azure Front Door and Gateway API
 

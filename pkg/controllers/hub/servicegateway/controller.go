@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -119,6 +120,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.result(ctx, &gateway, nil)
 	}
 	if !hasJournal {
+		var retired []string
+		if value := gateway.Annotations[azure.RetiredRootsAnnotation]; value != "" {
+			if err := json.Unmarshal([]byte(value), &retired); err != nil {
+				return r.result(ctx, &gateway, fmt.Errorf("invalid retired resource journal: %w", err))
+			}
+		}
+		for _, id := range []string{config.GatewayID, config.NATGatewayID, config.EgressPublicIPID} {
+			for _, old := range retired {
+				if strings.EqualFold(id, old) {
+					return r.result(ctx, &gateway, fmt.Errorf("resource ID %s was deleted by an earlier enrollment; configure fresh root resource IDs before re-enrolling", id))
+				}
+			}
+		}
 		journal, err = r.Provider.Prepare(ctx, string(gateway.UID), config)
 		if err != nil {
 			return r.result(ctx, &gateway, err)
@@ -144,6 +158,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if len(apps) == 0 {
 		before := gateway.DeepCopy()
+		var retired []string
+		if value := gateway.Annotations[azure.RetiredRootsAnnotation]; value != "" {
+			if err := json.Unmarshal([]byte(value), &retired); err != nil {
+				return ctrl.Result{}, fmt.Errorf("invalid retired resource journal: %w", err)
+			}
+		}
+		retired = append(retired, journal.Config.GatewayID, journal.Config.NATGatewayID, journal.Config.EgressPublicIPID)
+		data, err := json.Marshal(retired)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		gateway.Annotations[azure.RetiredRootsAnnotation] = string(data)
 		delete(gateway.Annotations, azure.JournalAnnotation)
 		controllerutil.RemoveFinalizer(&gateway, finalizer)
 		if err := r.Client.Patch(ctx, &gateway, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -349,7 +375,19 @@ func (r *Reconciler) resolve(ctx context.Context, g *gatewayv1.Gateway) ([]azure
 			if !valid {
 				return nil, fmt.Errorf("member %s lacks an accepted ClusterIP export for %s", cluster.Cluster, service.Name)
 			}
+			var candidates []fleetnet.EndpointSliceExport
 			for _, export := range exports.Items {
+				if export.Namespace == namespace && export.Spec.EndpointSliceReference.ClusterID == cluster.Cluster &&
+					export.Spec.OwnerServiceReference.Namespace == service.Namespace &&
+					export.Spec.OwnerServiceReference.Name == service.Name {
+					candidates = append(candidates, export)
+				}
+			}
+			currentExports, err := currentEndpointExports(candidates)
+			if err != nil {
+				return nil, err
+			}
+			for _, export := range currentExports {
 				source := export.Spec.EndpointSliceReference
 				owner := export.Spec.OwnerServiceReference
 				if export.Namespace != namespace || source.ClusterID != cluster.Cluster ||

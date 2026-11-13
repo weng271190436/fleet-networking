@@ -193,6 +193,54 @@ var _ = Describe("Service Gateway TCP proof", Serial, Label("service-gateway-pro
 			"Provision approved client-to-pod targetPort 8080 rules in all applicable NSGs; the test does not weaken network policy")
 		AddReportEntry("Service Gateway traffic proof", "100 successful independent TCP requests reached both members")
 
+		By("requiring sustained member health and reflected shared NAT egress before readiness changes")
+		natResource, err := api.Get(ctx, config.NATGatewayID)
+		Expect(err).NotTo(HaveOccurred())
+		var publicIPs []struct {
+			ID string `json:"id"`
+		}
+		Expect(json.Unmarshal(natResource.Properties["publicIpAddresses"], &publicIPs)).To(Succeed())
+		Expect(publicIPs).To(HaveLen(1))
+		natPIP, err := api.Get(ctx, publicIPs[0].ID)
+		Expect(err).NotTo(HaveOccurred())
+		var egressIP string
+		Expect(json.Unmarshal(natPIP.Properties["ipAddress"], &egressIP)).To(Succeed())
+		Expect(egressIP).NotTo(BeEmpty())
+		for _, member := range memberClusters {
+			probe := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "sg-egress-proof", Namespace: testNamespace},
+				Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{
+					Name: "curl", Image: "curlimages/curl:8.12.1", Command: []string{"/bin/sh", "-ec",
+						`for i in 1 2 3 4 5 6; do curl -4 --fail --silent --show-error --connect-timeout 5 --max-time 10 https://api.ipify.org; printf '\n'; sleep 10; done`},
+				}}}}
+			Expect(member.Client().Create(ctx, probe)).To(Succeed())
+		}
+		Eventually(ctx, func() error {
+			for _, member := range memberClusters {
+				if err := serviceGatewayNodesReady(ctx, member); err != nil {
+					return err
+				}
+				var pod corev1.Pod
+				if err := member.Client().Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "sg-egress-proof"}, &pod); err != nil {
+					return err
+				}
+				if pod.Status.Phase == corev1.PodFailed {
+					return StopTrying("Member " + member.Name() + " NAT egress probe failed")
+				}
+				if pod.Status.Phase != corev1.PodSucceeded {
+					return fmt.Errorf("waiting for sustained NAT egress in %s", member.Name())
+				}
+				logs, err := member.PodLogs(ctx, testNamespace, "sg-egress-proof", &corev1.PodLogOptions{Container: "curl"})
+				if err != nil {
+					return err
+				}
+				if err := serviceGatewayEgressSamples(logs, egressIP); err != nil {
+					return fmt.Errorf("member %s: %w", member.Name(), err)
+				}
+			}
+			return nil
+		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+		AddReportEntry("Service Gateway sustained NAT egress", map[string]any{"publicIP": egressIP, "samplesPerMember": 6, "members": memberClusterNames})
+
 		By("withdrawing one member's ready endpoints while retaining the other and shared egress")
 		member := memberClusters[0]
 		Expect(serviceGatewaySetReadiness(ctx, member, false)).To(Succeed())

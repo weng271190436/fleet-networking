@@ -15,13 +15,11 @@ if [[ "${SERVICE_GATEWAY_CUTOVER_APPROVED:-false}" != true ]]; then
   echo "error: set SERVICE_GATEWAY_CUTOVER_APPROVED=true only after approving billable setup, public authenticated AKS APIs, and existing-node subnet egress cutover" >&2
   exit 1
 fi
-if [[ ! "${SERVICE_GATEWAY_USER_OBJECT_ID:-}" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
-  echo "error: SERVICE_GATEWAY_USER_OBJECT_ID must be your Entra user Object ID" >&2
-  exit 1
-fi
 for tool in az kubectl kubelogin helm jq curl python3 ssh-keygen docker go timeout; do
   command -v "$tool" >/dev/null || { echo "error: missing $tool" >&2; exit 1; }
 done
+principal_type="${SERVICE_GATEWAY_PRINCIPAL_TYPE:-User}"
+operator_id=$(service_gateway_principal_id)
 docker info >/dev/null
 go version
 go list -m -f '{{.GoVersion}}' >/dev/null
@@ -130,7 +128,7 @@ for cluster in hub member-1 member-2; do
   cluster_json=$(az aks show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$AZURE_RESOURCE_GROUP" -n "$cluster" -o json)
   [[ "$(jq -er .provisioningState <<<"$cluster_json")" == Succeeded ]]
   cluster_id=$(jq -er .id <<<"$cluster_json")
-  role "$SERVICE_GATEWAY_USER_OBJECT_ID" User b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b "$cluster_id"
+  role "$operator_id" "$principal_type" b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b "$cluster_id"
   az aks get-credentials --subscription "$AZURE_SUBSCRIPTION_ID" -g "$AZURE_RESOURCE_GROUP" -n "$cluster" \
     --file "$KUBECONFIG" --context "$cluster-admin"
   kubelogin convert-kubeconfig --login azurecli --context "$cluster-admin"

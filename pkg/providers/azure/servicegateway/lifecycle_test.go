@@ -243,10 +243,38 @@ func TestRemovingOneApplicationDeletesItsOrphanPIPOnly(t *testing.T) {
 	if _, ok := a.resources[lb]; ok {
 		t.Fatal("removed application LB leaked")
 	}
+
 	if _, ok := a.resources[pip]; ok {
 		t.Fatal("removed application PIP leaked")
 	}
 	if _, ok := a.resources[c.NATGatewayID]; !ok {
 		t.Fatal("remaining application lost shared NAT")
+	}
+}
+
+func TestConvergedGraphDoesNotRewriteServicesOrLocations(t *testing.T) {
+	p, a, _, j := fixture(t)
+	apps := []Application{{Identity: "fleet-app", FrontendPort: 80, BackendPort: 8080,
+		Backends: []Backend{{PodIP: "172.26.0.10", NodeIP: "172.26.0.5", Cluster: "a"}}}}
+	converge(t, p, a, j, apps)
+	a.writes = nil
+	for n := 0; n < 3; n++ {
+		if _, err := p.Reconcile(context.Background(), "owner", j, apps); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(a.writes) != 0 {
+		t.Fatalf("converged graph was rewritten: %v", a.writes)
+	}
+	apps[0].Backends[0].PodIP = "172.26.0.11"
+	converge(t, p, a, j, apps)
+	if len(a.writes) != 1 || a.writes[0] != "post "+j.Config.GatewayID+"/updateAddressLocations" {
+		t.Fatalf("pod replacement must update only membership: %v", a.writes)
+	}
+	a.writes = nil
+	apps[0].Backends = nil
+	converge(t, p, a, j, apps)
+	if len(a.writes) != 1 || a.writes[0] != "post "+j.Config.GatewayID+"/updateAddressLocations" {
+		t.Fatalf("readiness loss must withdraw only membership: %v", a.writes)
 	}
 }

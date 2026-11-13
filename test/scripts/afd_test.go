@@ -28,6 +28,7 @@ func TestAFDSharedVNetWorkflow(t *testing.T) {
 						Network string `json:"network-setting"`
 						ATM     bool   `json:"enable-traffic-manager"`
 						AFD     bool   `json:"enable-afd"`
+						SG      bool   `json:"enable-service-gateway"`
 					}
 				}
 			}
@@ -52,6 +53,11 @@ func TestAFDSharedVNetWorkflow(t *testing.T) {
 	for _, row := range job.Strategy.Matrix.Include {
 		scenario := row.Network
 		switch {
+		case row.SG:
+			if row.Network != "shared-vnet" || row.ATM || row.AFD {
+				t.Fatal("Service Gateway requires an isolated shared-VNet fixture")
+			}
+			scenario += "-sg"
 		case row.AFD:
 			if row.Network != "shared-vnet" || row.ATM {
 				t.Fatal("AFD must use an independent shared-VNet fixture")
@@ -68,7 +74,7 @@ func TestAFDSharedVNetWorkflow(t *testing.T) {
 		}
 		scenarios[scenario] = true
 	}
-	for _, scenario := range []string{"shared-vnet-atm", "shared-vnet-afd", "peered-vnet", "dynamic-ip-allocation", "unsupported"} {
+	for _, scenario := range []string{"shared-vnet-atm", "shared-vnet-afd", "shared-vnet-sg", "peered-vnet", "dynamic-ip-allocation", "unsupported"} {
 		if !scenarios[scenario] {
 			t.Errorf("missing CI scenario %s", scenario)
 		}

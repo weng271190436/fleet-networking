@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	ControllerName    = "networking.fleet.azure.com/service-gateway"
-	ConfigAnnotation  = "networking.fleet.azure.com/service-gateway-config"
-	JournalAnnotation = "networking.fleet.azure.com/service-gateway-journal"
-	OwnerTag          = "networking.fleet.azure.com.gateway-uid"
+	ControllerName         = "networking.fleet.azure.com/service-gateway"
+	ConfigAnnotation       = "networking.fleet.azure.com/service-gateway-config"
+	JournalAnnotation      = "networking.fleet.azure.com/service-gateway-journal"
+	RetiredRootsAnnotation = "networking.fleet.azure.com/service-gateway-retired-roots"
+	OwnerTag               = "networking.fleet.azure.com.gateway-uid"
 )
 
 var identityPattern = regexp.MustCompile(`^fleet-[a-z0-9-]{1,48}$`)

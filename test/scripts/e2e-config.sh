@@ -6,6 +6,34 @@ export RETAIN_AFD_E2E_SETUP="${RETAIN_AFD_E2E_SETUP:-false}"
 export AZURE_NETWORK_SETTING="${AZURE_NETWORK_SETTING:-shared-vnet}"
 export ENABLE_SERVICE_GATEWAY_PROOF="${ENABLE_SERVICE_GATEWAY_PROOF:-false}"
 
+service_gateway_principal_id() {
+  local kind="${SERVICE_GATEWAY_PRINCIPAL_TYPE:-User}"
+  local object_id="${SERVICE_GATEWAY_PRINCIPAL_OBJECT_ID:-${SERVICE_GATEWAY_USER_OBJECT_ID:-}}"
+  if [[ "$kind" != User && "$kind" != ServicePrincipal ]]; then
+    echo "error: SERVICE_GATEWAY_PRINCIPAL_TYPE must be User or ServicePrincipal" >&2
+    return 1
+  fi
+  if [[ -z "$object_id" && "$kind" == ServicePrincipal ]]; then
+    # Read only the identity claim from the trusted CLI's ARM token locally.
+    # Never print/store the token or query Microsoft Graph for name resolution.
+    object_id=$(az account get-access-token --subscription "$AZURE_SUBSCRIPTION_ID" \
+      --resource https://management.azure.com/ --query accessToken -o tsv |
+      python3 -c 'import sys,json,base64
+try:
+ p=sys.stdin.read().strip().split(".")
+ claims=json.loads(base64.urlsafe_b64decode(p[1]+"="*(-len(p[1])%4)))
+ if claims.get("idtyp")=="user": raise ValueError()
+ print(claims["oid"])
+except (IndexError,KeyError,ValueError,TypeError):
+ sys.exit("Cannot identify the CI service principal from the ARM token")') || return
+  fi
+  if [[ ! "$object_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+    echo "error: provide SERVICE_GATEWAY_PRINCIPAL_OBJECT_ID (or legacy SERVICE_GATEWAY_USER_OBJECT_ID) as an Entra Object ID" >&2
+    return 1
+  fi
+  printf '%s\n' "$object_id"
+}
+
 if [[ "$ENABLE_SERVICE_GATEWAY_PROOF" != true && "$ENABLE_SERVICE_GATEWAY_PROOF" != false ]]; then
   echo "error: ENABLE_SERVICE_GATEWAY_PROOF must be true or false" >&2
   return 1

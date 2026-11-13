@@ -33,10 +33,42 @@ import (
 type recordingProvider struct {
 	withdrawn  bool
 	reconciled bool
+	prepared   bool
 }
 
 func (p *recordingProvider) Prepare(context.Context, string, azure.Config) (azure.Journal, error) {
+	p.prepared = true
 	return azure.Journal{}, nil
+}
+
+func TestWithdrawalRecordsRetiredRootIdentities(t *testing.T) {
+	base := "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/test/providers/Microsoft.Network"
+	config := azure.Config{Location: "eastus2euap", GatewayID: base + "/serviceGateways/test",
+		VNetID: base + "/virtualNetworks/test", SubnetIDs: []string{base + "/virtualNetworks/test/subnets/a"},
+		NATGatewayID: base + "/natGateways/test", EgressPublicIPID: base + "/publicIPAddresses/test",
+		ApproveSubnetEgressCutover: true}
+	configJSON, _ := json.Marshal(config)
+	journalJSON, _ := json.Marshal(azure.Journal{Config: config, PreviousGatewayIDs: map[string]string{config.SubnetIDs[0]: ""}})
+	g := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "gateway", UID: "owner",
+		Finalizers: []string{finalizer}, Annotations: map[string]string{azure.ConfigAnnotation: string(configJSON), azure.JournalAnnotation: string(journalJSON)}},
+		Spec: gatewayv1.GatewaySpec{GatewayClassName: "sg", Listeners: []gatewayv1.Listener{{Name: "web", Protocol: gatewayv1.TCPProtocolType, Port: 80}}}}
+	class := &gatewayv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "sg"}, Spec: gatewayv1.GatewayClassSpec{ControllerName: azure.ControllerName}}
+	r, p := controllerFixture(t, g, class)
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(g)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current gatewayv1.Gateway
+	if err := r.Client.Get(context.Background(), client.ObjectKeyFromObject(g), &current); err != nil {
+		t.Fatal(err)
+	}
+	var retired []string
+	if err := json.Unmarshal([]byte(current.Annotations[azure.RetiredRootsAnnotation]), &retired); err != nil {
+		t.Fatal(err)
+	}
+	if len(retired) != 3 || current.Annotations[azure.JournalAnnotation] != "" || !p.reconciled {
+		t.Fatal("withdrawal did not record deleted identities")
+	}
 }
 func (p *recordingProvider) Reconcile(context.Context, string, azure.Journal, []azure.Application) (map[string]string, error) {
 	p.reconciled = true
@@ -118,7 +150,7 @@ func TestResolveAggregatesTwoAcceptedMemberExports(t *testing.T) {
 					Ports:                 []discoveryv1.EndpointPort{{Name: ptr.To("http"), Port: ptr.To(int32(8080))}},
 					ServiceGateway:        &fleetnet.ServiceGatewayEndpointSlice{ServiceUID: member, Endpoints: []fleetnet.ServiceGatewayEndpoint{{Addresses: []string{podIP}, NodeIP: nodeIP}}}}})
 	}
-	r, _ := controllerFixture(t, objects...)
+	r, provider := controllerFixture(t, objects...)
 	apps, err := r.resolve(context.Background(), g)
 	if err != nil {
 		t.Fatal(err)
@@ -129,5 +161,57 @@ func TestResolveAggregatesTwoAcceptedMemberExports(t *testing.T) {
 	// A named targetPort is resolved from actual EndpointSlice ports.
 	if apps[0].FrontendPort == apps[0].BackendPort {
 		t.Fatal("frontend port used as pod target port")
+	}
+	base := "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/test/providers/Microsoft.Network"
+	config := azure.Config{Location: "eastus2euap", GatewayID: base + "/serviceGateways/test",
+		VNetID: base + "/virtualNetworks/test", SubnetIDs: []string{base + "/virtualNetworks/test/subnets/a"},
+		NATGatewayID: base + "/natGateways/test", EgressPublicIPID: base + "/publicIPAddresses/test",
+		ApproveSubnetEgressCutover: true}
+	configJSON, _ := json.Marshal(config)
+	retiredJSON, _ := json.Marshal([]string{config.GatewayID})
+	var enrolled gatewayv1.Gateway
+	if err := r.Client.Get(context.Background(), client.ObjectKeyFromObject(g), &enrolled); err != nil {
+		t.Fatal(err)
+	}
+	enrolled.Spec.GatewayClassName = "sg"
+	enrolled.Annotations = map[string]string{azure.ConfigAnnotation: string(configJSON), azure.RetiredRootsAnnotation: string(retiredJSON)}
+	if err := r.Client.Update(context.Background(), &enrolled); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Client.Create(context.Background(), &gatewayv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "sg"},
+		Spec: gatewayv1.GatewayClassSpec{ControllerName: azure.ControllerName}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(g)}); err == nil || provider.prepared || provider.reconciled {
+		t.Fatal("retired root resource IDs were re-enrolled")
+	}
+	var old fleetnet.EndpointSliceExport
+	if err := r.Client.Get(context.Background(), client.ObjectKey{Namespace: fmt.Sprintf(hubconfig.HubNamespaceNameFormat, "a"), Name: "endpoints"}, &old); err != nil {
+		t.Fatal(err)
+	}
+	latest := old.DeepCopy()
+	latest.Name = "newer-source-snapshot"
+	latest.ResourceVersion = ""
+	latest.Spec.EndpointSliceReference.Generation = old.Spec.EndpointSliceReference.Generation + 1
+	latest.Spec.ServiceGateway.Endpoints = nil
+	if err := r.Client.Create(context.Background(), latest); err != nil {
+		t.Fatal(err)
+	}
+	apps, err = r.resolve(context.Background(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apps[0].Backends) != 1 || apps[0].Backends[0].Cluster != "b" {
+		t.Fatalf("older duplicate export resurrected withdrawn member A: %+v", apps)
+	}
+	conflicting := latest.DeepCopy()
+	conflicting.Name = "conflicting-source-snapshot"
+	conflicting.ResourceVersion = ""
+	conflicting.Spec.ServiceGateway = old.Spec.ServiceGateway.DeepCopy()
+	if err := r.Client.Create(context.Background(), conflicting); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.resolve(context.Background(), g); err == nil {
+		t.Fatal("contradictory snapshots of the same source generation accepted")
 	}
 }

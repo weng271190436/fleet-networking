@@ -207,7 +207,48 @@ and partial/full address-location updates. An earlier controller run lost
 node egress despite successful ARM state; its exact cause is not established.
 The passing run used fresh network resource names and recovered member agents.
 Do not treat resource-name reuse or provisioning order as a proven root cause.
+The next repeat run failed readiness withdrawal and again left both members'
+nodes NotReady. Ordered route withdrawal recovered all four nodes. The earlier
+pass is not a reproducibility guarantee; unattended enrollment remains unsafe
+until the recurring cutover and stale-export behavior is resolved.
+
+### Repeat-run fixes and remaining limitation
+
+The hub now selects the latest source EndpointSlice generation when annotation
+races leave duplicate transport exports. It rejects contradictory snapshots
+of the same source generation instead of unioning older ready pods into new
+membership. Unchanged observed service and location state is no longer written
+on every poll; pod replacement/readiness changes update membership only.
+
+A controlled comparison with the same controller code reproduced failed node
+egress when deleted gateway/NAT/PIP **resource IDs were recreated**. Runs using
+never-used IDs passed. The underlying Network RP/data-plane cause is not
+established, so fixed-ID recreation is **not considered safe**: deleting the
+last route then re-exporting with the same configured root IDs remains an
+unresolved production lifecycle case. Use new approved root IDs when creating
+a new enrollment; this is a tested experimental workaround, not a platform
+guarantee.
+After final-route cleanup the Gateway records the retired root IDs and refuses
+to re-enroll those same IDs. A platform administrator must configure new IDs
+for another enrollment. Deleting/recreating the Gateway loses that local
+history, so administrators must still use never-used IDs across Gateways.
+The history annotation is privileged controller state just like the rollback
+journal; do not remove it to force a retry.
+
+The Make E2E runner now gives every invocation new root resource names within
+the configured resource groups and serializes runs sharing its local state.
+The stronger proof requires six matching reflected-NAT egress samples in
+each member, fresh node leases, and the original ingress/readiness/withdrawal
+checks. Three consecutive fresh-ID runs passed on 2026-11-13; all four nodes were
+Ready afterward. The original base configuration is preserved, and the actual
+per-run configuration is recorded for diagnosis and success-only CI cleanup.
 See the [E2E prerequisites and isolated invocation](../../test/README.md#service-gateway-tcp-live-proof).
 Do not point it at the retained manual lab or existing unowned resources.
 Failure retains Kubernetes fixtures and enrolled networking for diagnosis;
 an administrator must recover/clean them explicitly.
+The same Make workflow is wired into the existing E2E CI matrix with a
+protected `service-gateway-e2e` environment, explicit preview/cutover approval,
+and a CI service principal. CI deletes the dedicated environment only after
+the full proof passes and cleanup independently verifies detach/ownership
+evidence. Failed cutovers are retained, unlike ordinary CI resource-group
+cleanup. See [CI configuration](../../test/README.md#service-gateway-ci-matrix-scenario).

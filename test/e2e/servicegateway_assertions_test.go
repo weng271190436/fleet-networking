@@ -99,6 +99,36 @@ func serviceGatewayReplies(replies []string, members []string) error {
 	return nil
 }
 
+func serviceGatewayEgressSamples(logs, expected string) error {
+	ip, err := netip.ParseAddr(expected)
+	if err != nil || !ip.Is4() || ip.IsUnspecified() {
+		return fmt.Errorf("invalid expected NAT IPv4 address")
+	}
+	lines := strings.Fields(logs)
+	if len(lines) != 6 {
+		return fmt.Errorf("expected six egress samples, got %d", len(lines))
+	}
+	for _, address := range lines {
+		if address != expected {
+			return fmt.Errorf("observed egress %s, expected NAT %s", address, expected)
+		}
+	}
+	return nil
+}
+
+func TestServiceGatewayEgressSampleEvidence(t *testing.T) {
+	expected := "48.1.2.3"
+	logs := strings.Repeat(expected+"\n", 6)
+	if err := serviceGatewayEgressSamples(logs, expected); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", strings.Repeat(expected+"\n", 5), strings.Replace(logs, expected, "20.1.1.1", 1)} {
+		if err := serviceGatewayEgressSamples(bad, expected); err == nil {
+			t.Fatalf("incomplete or wrong outbound path accepted: %q", bad)
+		}
+	}
+}
+
 func TestServiceGatewayProofAssertions(t *testing.T) {
 	identity := "fleet-application"
 	backends := []sg.Backend{{PodIP: "172.26.0.10", NodeIP: "172.26.0.5"}, {PodIP: "172.26.4.10", NodeIP: "172.26.4.5"}}

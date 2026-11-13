@@ -31,6 +31,9 @@ func serviceGatewayScriptEnvironment(t *testing.T) {
 	t.Setenv("SERVICE_GATEWAY_CUTOVER_APPROVED", "true")
 	t.Setenv("SERVICE_GATEWAY_USER_OBJECT_ID", "22222222-2222-2222-2222-222222222222")
 	t.Setenv("SERVICE_GATEWAY_RESUME_INSTALL", "false")
+	t.Setenv("SERVICE_GATEWAY_PRINCIPAL_TYPE", "User")
+	t.Setenv("SERVICE_GATEWAY_PRINCIPAL_OBJECT_ID", "")
+	t.Setenv("SERVICE_GATEWAY_CLEANUP_APPROVED", "false")
 }
 
 func TestServiceGatewayMakeScenarioConfiguration(t *testing.T) {
@@ -95,10 +98,14 @@ func TestServiceGatewayRunnerRequiresSuccessfulSetup(t *testing.T) {
 	if err := os.MkdirAll(state, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"setup-complete", "network.json", "kubeconfig"} {
+	for _, name := range []string{"setup-complete", "kubeconfig"} {
 		if err := os.WriteFile(filepath.Join(state, name), []byte("{}"), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	config := `{"gatewayID":"/subscriptions/test/resourceGroups/test/providers/Microsoft.Network/serviceGateways/e2e","natGatewayID":"/subscriptions/test/resourceGroups/test/providers/Microsoft.Network/natGateways/e2e","egressPublicIPID":"/subscriptions/test/resourceGroups/test/providers/Microsoft.Network/publicIPAddresses/egress","subnetIDs":["subnet-a","subnet-b"]}`
+	if err := os.WriteFile(filepath.Join(state, "network.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
 	}
 	output, err = runAFDScript(t, "./run-e2e.sh")
 	if err != nil {
@@ -111,6 +118,37 @@ func TestServiceGatewayRunnerRequiresSuccessfulSetup(t *testing.T) {
 	if !strings.Contains(args, "-ginkgo.label-filter=service-gateway-proof") ||
 		!strings.Contains(args, "-ginkgo.json-report="+filepath.Join(state, "report.json")) {
 		t.Fatalf("runner omitted isolated proof or durable report: %s", args)
+	}
+	first := readAFDFile(t, filepath.Join(state, "proof-network.json"))
+	output, err = runAFDScript(t, "./run-e2e.sh")
+	if err != nil {
+		t.Fatalf("second invocation failed: %v\n%s", err, output)
+	}
+	second := readAFDFile(t, filepath.Join(state, "proof-network.json"))
+	var a, b map[string]any
+	if err := json.Unmarshal([]byte(first), &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(second), &b); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"gatewayID", "natGatewayID", "egressPublicIPID"} {
+		if a[field] == b[field] {
+			t.Fatalf("independent test invocations reused %s", field)
+		}
+	}
+	if readAFDFile(t, filepath.Join(state, "network.json")) != config {
+		t.Fatal("approved base network configuration was modified")
+	}
+	if strings.Join([]string{a["subnetIDs"].([]any)[0].(string), b["subnetIDs"].([]any)[0].(string)}, ",") != "subnet-a,subnet-a" {
+		t.Fatal("proof generation changed enrolled subnets")
+	}
+	output, err = runAFDScript(t, "-ec", `exec 8>"$1"; flock -n 8; bash ./run-e2e.sh`, "_", filepath.Join(state, "proof.lock"))
+	if err == nil || !strings.Contains(output, "another Service Gateway proof") {
+		t.Fatalf("concurrent cutover was not rejected: %v\n%s", err, output)
+	}
+	if readAFDFile(t, filepath.Join(state, "proof-network.json")) != second {
+		t.Fatal("rejected concurrent test overwrote active network configuration")
 	}
 }
 
